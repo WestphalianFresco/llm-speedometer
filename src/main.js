@@ -148,7 +148,8 @@ function push () {
     vendors: payload.vendors || detectVendors(),
     appVersion: app.getVersion(),
     unlocked: Boolean(uiState.unlocked),
-    vendor: uiState.vendor
+    vendor: uiState.vendor,
+    mini: Boolean(uiState.mini)
   })
 }
 
@@ -211,6 +212,16 @@ ipcMain.handle('ui:open-vendor', async (_event, vendorId) => {
   } catch {
     return { ok: false, reason: 'open_failed', url: vendor.url }
   }
+})
+
+// A manual refresh may skip the comfortable interval but still cannot dip
+// under the provider's hard floor, so impatient clicking cannot dig a 429 hole.
+ipcMain.on('ui:refresh', () => {
+  ;(async () => {
+    store.refreshLocal()
+    await store.pollOfficial({ force: true })
+    push()
+  })().catch(() => {})
 })
 
 ipcMain.on('ui:close', () => app.quit())

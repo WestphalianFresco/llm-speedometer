@@ -562,6 +562,7 @@ function render (data) {
   renderModelChip(data)
   renderTasks(data)
   renderOdometer(data)
+  syncCollapsed(data)
   renderLock(data)
 
   if (data.account && data.account.email) {
@@ -856,6 +857,19 @@ nodes.lockOpen.addEventListener('click', async () => {
     : 'Could not open the browser.'
 })
 
+/**
+ * Keep the DOM's collapsed state in step with the window's.
+ *
+ * The window size is restored from disk on launch; without this the body class
+ * never followed, and the full layout rendered clipped inside the pill.
+ */
+function syncCollapsed (data) {
+  const shouldBeMini = Boolean(data.mini)
+  if (document.body.classList.contains('mini') !== shouldBeMini) {
+    document.body.classList.toggle('mini', shouldBeMini)
+  }
+}
+
 function renderLock (data) {
   if (!vendorsBuilt && data.vendors) buildVendors(data.vendors)
   if (unlockAnimating) return
@@ -969,6 +983,12 @@ nodes.mascot.addEventListener('animationend', e => {
   if (e.animationName === 'boing') nodes.mascot.classList.remove('boing')
 })
 
+el('btn-refresh').addEventListener('click', e => {
+  const btn = e.currentTarget
+  btn.classList.add('spinning')
+  setTimeout(() => btn.classList.remove('spinning'), 640)
+  window.meter.refresh()
+})
 el('btn-lock').addEventListener('click', () => window.meter.lock())
 el('btn-close').addEventListener('click', () => window.meter.close())
 nodes.btnCloseMini.addEventListener('click', () => window.meter.close())
@@ -990,6 +1010,11 @@ buildCluster()
 
 // Ignition self-test: every needle sweeps to full and settles back, the way a
 // car's cluster does at startup. The spring supplies the overshoot for free.
+// How long every needle is pinned at full scale before falling back to live
+// values. A real cluster holds the sweep long enough to read as a deliberate
+// self-test rather than a flicker.
+const IGNITION_HOLD_MS = 1250
+
 function runIgnitionSweep () {
   for (const key of DIAL_KEYS) {
     setNeedle(key, DIALS[key].max)
@@ -999,7 +1024,7 @@ function runIgnitionSweep () {
     // settle straight onto the live values; the spring damps the overshoot
     if (latest) render(latest)
     else for (const key of DIAL_KEYS) setNeedle(key, 0)
-  }, 700)
+  }, IGNITION_HOLD_MS)
 }
 
 // On a launch that is already unlocked, still run the self-test once.

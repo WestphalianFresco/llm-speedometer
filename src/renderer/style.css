@@ -487,6 +487,7 @@ html, body {
 .controls { -webkit-app-region: no-drag; display: flex; gap: 2px; flex: none; }
 
 .ctl {
+  -webkit-app-region: no-drag;
   width: 19px; height: 19px;
   padding: 0;
   border: 0; border-radius: 6px;
@@ -501,6 +502,8 @@ html, body {
 .ctl:hover       { background: var(--edge); color: var(--ink); transform: scale(1.12); }
 .ctl:active      { transform: scale(.92); }
 .ctl-close:hover { background: var(--crit); color: #fff; }
+.ctl.spinning    { animation: spin 620ms linear; }
+@keyframes spin  { to { transform: rotate(360deg); } }
 
 /* ---------- instrument cluster ---------- */
 
@@ -723,13 +726,36 @@ html, body {
 
 /* ---------- collapsed pill ---------- */
 
-body.mini .card { padding: 7px 12px; border-radius: 999px; }
+body.mini .card { padding: 6px 8px 6px 14px; border-radius: 999px; }
 body.mini .header,
 body.mini .lower,
 body.mini .cluster,
 body.mini .footer { display: none; }
-body.mini .titlebar { justify-content: flex-start; gap: 9px; align-items: center; }
+
+/* readout left, controls hard right, nothing floating in between */
+body.mini .titlebar { justify-content: space-between; align-items: center; gap: 10px; }
+body.mini .mascot-row { gap: 10px; align-items: center; }
 body.mini .mini-only { display: flex; }
+
+/* the pill is small enough that a bobbing face reads as jitter */
+body.mini .mascot { animation: none; font-size: 15px; }
+
+/* Give the two controls a resting chip. Ungrounded glyphs at this size read as
+   decoration rather than buttons -- the old hollow square especially. */
+body.mini .ctl {
+  width: 22px; height: 22px;
+  border-radius: 8px;
+  background: var(--edge);
+  color: var(--muted);
+  font-size: 12px;
+}
+body.mini .ctl:hover { background: color-mix(in srgb, var(--ink) 16%, transparent); color: var(--ink); }
+body.mini .ctl-close:hover { background: var(--crit); color: #fff; }
+
+.mini-controls {
+  -webkit-app-region: no-drag;
+  display: none; align-items: center; gap: 4px; flex: none;
+}
 
 .mini-only { display: none; align-items: center; gap: 7px; }
 .mini-pct {

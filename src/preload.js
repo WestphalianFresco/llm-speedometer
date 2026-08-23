@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('meter', {
   },
   ready: () => ipcRenderer.send('ui:ready'),
   close: () => ipcRenderer.send('ui:close'),
+  refresh: () => ipcRenderer.send('ui:refresh'),
   setMini: mini => ipcRenderer.send('ui:mini', Boolean(mini)),
   setModel: value => ipcRenderer.invoke('ui:model', String(value)),
   unlock: vendorId => ipcRenderer.invoke('ui:unlock', String(vendorId)),
