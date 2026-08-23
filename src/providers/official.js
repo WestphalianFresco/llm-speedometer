@@ -180,7 +180,11 @@ class OfficialProvider {
       // Endpoint answered but in a shape we do not recognize — treat as a soft
       // failure so the local estimator stays in charge instead of showing 0%.
       this._throttle('unrecognized_schema', 60 * 60 * 1000)
-      return { status: 'error', reason: 'unrecognized_schema', payload }
+      // The body is deliberately not returned. It is an account-scoped API
+      // response, and the caller only ever needs to know the shape was not
+      // understood — passing it along would put it a step from the UI and the
+      // diagnostics tooltip.
+      return { status: 'error', reason: 'unrecognized_schema' }
     }
 
     this._succeed()

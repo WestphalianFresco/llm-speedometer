@@ -1,10 +1,11 @@
 'use strict'
 const fs = require('fs')
-const os = require('os')
 const path = require('path')
 const { readAccount } = require('./account')
 
-const { claudeProjects, codexHome, codexAuth, codexSessions, geminiHome, exists: pathExists } = require('./paths')
+const {
+  claudeProjects, codexHome, codexAuth, codexSessions, geminiHome, exists
+} = require('./paths')
 
 /**
  * The providers the unlock screen can offer.
@@ -43,8 +44,6 @@ const VENDORS = [
     signInHint: null
   }
 ]
-
-const exists = p => { try { fs.accessSync(p); return true } catch { return false } }
 
 function detectAnthropic () {
   const account = readAccount()
@@ -151,9 +150,22 @@ const DETECTORS = {
   google: detectGoogle
 }
 
+/**
+ * Detection is not free — hasCodexRollouts walks the Codex session tree — and
+ * it was being re-run on every render, several times a minute, to answer a
+ * question whose answer changes when someone installs a CLI. A short cache
+ * keeps the unlock screen current while taking that walk off the render path.
+ */
+const DETECT_TTL_MS = 10 * 1000
+let detectCache = { at: 0, value: null }
+
 /** @returns {Array<object>} every vendor, annotated with live local state. */
 function detectVendors () {
-  return VENDORS.map(v => Object.assign({}, v, DETECTORS[v.id]()))
+  const now = Date.now()
+  if (detectCache.value && now - detectCache.at < DETECT_TTL_MS) return detectCache.value
+  const value = VENDORS.map(v => Object.assign({}, v, DETECTORS[v.id]()))
+  detectCache = { at: now, value }
+  return value
 }
 
 module.exports = { VENDORS, detectVendors }

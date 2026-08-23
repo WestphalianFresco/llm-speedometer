@@ -9,9 +9,16 @@
   /* instrument faces sit darker than the card, like a real cluster */
   --face:      #221F1A;
   --face-edge: #3B362D;
+  /* --tick / --tick-lit / --dial-ink are read on the instrument faces, which
+     stay dark in both themes, so they do not flip. The three below are drawn
+     on the CARD instead — tick ring, numerals, needle — so they must. */
   --tick:      #6E6759;
   --tick-lit:  #CFC7B4;
   --dial-ink:  #F2EEE3;
+
+  --mark:      #A29A8A;
+  --mark-lit:  #5A5346;
+  --needle:    #24211A;
 
   --safe:      #7FB069;
   --warm:      #E0B048;
@@ -57,6 +64,10 @@
     --face:      #17150F;
     --face-edge: #332F26;
     --accent:    #E28A6A;
+
+    --mark:      #6E6759;
+    --mark-lit:  #CFC7B4;
+    --needle:    #F2EEE3;
   }
 }
 
@@ -82,7 +93,11 @@ html, body {
   border-radius: 20px;
   background: var(--bg);
   border: 1px solid var(--edge);
-  box-shadow: 0 10px 30px var(--shadow), 0 1px 0 rgba(255,255,255,0.5) inset;
+  /* The edge is the border and nothing else. A white inset highlight used to
+     ride the top rim only, which lit one side of the outline and left the
+     bottom bare — the contour now reads the same the whole way round. The drop
+     shadow stays: it sits under the card, not on its edge. */
+  box-shadow: 0 10px 30px var(--shadow);
   animation: card-in 340ms cubic-bezier(.2, .9, .25, 1.1);
 }
 
@@ -105,8 +120,13 @@ html, body {
   justify-content: center;
   gap: 9px;
   padding: 16px;
-  animation: lock-in 220ms ease-out;
 }
+
+/* Only ever fades in when it is RE-entered from the dashboard. At launch this
+   panel is the first thing painted, and fading it up from transparent showed
+   the cluster through it for a fifth of a second — which read as the app
+   starting on the dashboard and then being interrupted. */
+.lock.entering { animation: lock-in 220ms ease-out; }
 .lock[hidden] { display: none; }
 @keyframes lock-in { from { opacity: 0; } to { opacity: 1; } }
 
@@ -236,6 +256,14 @@ html, body {
   44%  { transform: translateY(-115%); opacity: 0; }
   56%  { transform: translateY(115%);  opacity: 0; }
   100% { transform: translateY(0);     opacity: 1; }
+}
+
+/* The landing screen covers the header, so it carries its own way out. Without
+   this the only exit from a machine with no usable provider was Task Manager. */
+.lock-close {
+  position: absolute;
+  top: 10px; right: 12px;
+  z-index: 1;
 }
 
 .lock-title {
@@ -535,7 +563,191 @@ html, body {
 .ctl-rev:hover  { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
 .ctl-rev:active { transform: scale(.9); }
 .ctl.spinning    { animation: spin 620ms linear; }
+/* refresh cranks the engine over: keep turning until it catches */
+.ctl.cranking    { animation: spin 560ms linear 3; }
 @keyframes spin  { to { transform: rotate(360deg); } }
+
+/* hidden by the Session list switch in settings; the odometer then takes the
+   full width of the lower deck rather than leaving a hole */
+body.no-sessions .tasks { display: none; }
+body.no-sessions .odo { flex: 1 1 auto; }
+
+/* the collapsed pill has no room for a settings overlay */
+body.mini .settings { display: none; }
+
+/* ---------- settings ---------- */
+
+/* Same overlay treatment as the lock screen: it covers the card, is scrollable
+   because the window is fixed at 396px tall, and never resizes anything. */
+.settings {
+  position: absolute;
+  inset: 0;
+  z-index: 45;
+  border-radius: 20px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  animation: lock-in 180ms ease-out;
+  -webkit-app-region: no-drag;
+}
+.settings[hidden] { display: none; }
+
+.set-head {
+  flex: none;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 11px 13px 8px;
+  border-bottom: 1px solid var(--edge);
+  -webkit-app-region: drag;
+}
+.set-head .ctl { -webkit-app-region: no-drag; }
+
+.set-title {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--ls-caps);
+  color: var(--ink);
+}
+
+.set-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px 13px 12px;
+}
+/* a thin, unobtrusive scrollbar — the default one is wider than the rows */
+.set-body::-webkit-scrollbar { width: 7px; }
+.set-body::-webkit-scrollbar-thumb {
+  background: var(--edge); border-radius: 4px;
+}
+.set-body::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--ink) 22%, transparent);
+}
+
+.set-group { padding: 9px 0 3px; }
+.set-group + .set-group { border-top: 1px solid var(--edge); }
+
+.set-group h4 {
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--ls-caps);
+  color: var(--faint);
+  margin-bottom: 6px;
+}
+
+.set-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px;
+  min-height: 26px;
+  padding: 3px 0;
+}
+
+.set-label {
+  font-size: var(--fs-xs);
+  color: var(--ink);
+  display: flex; flex-direction: column; gap: 1px;
+}
+/* the second line of a label: what the switch actually does */
+.set-label em {
+  font-style: normal;
+  font-size: var(--fs-micro);
+  color: var(--faint);
+}
+
+.set-value {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  text-align: right;
+  max-width: 62%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.set-note {
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+  color: var(--faint);
+  padding: 4px 0 2px;
+}
+
+.set-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 0 2px; }
+
+.set-btn {
+  font-family: var(--font);
+  font-size: var(--fs-xs);
+  color: var(--ink);
+  background: var(--edge);
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 5px 9px;
+  cursor: pointer;
+  transition: background 120ms, color 120ms;
+}
+.set-btn:hover { background: color-mix(in srgb, var(--ink) 14%, transparent); }
+.set-btn:disabled { opacity: .45; cursor: default; }
+.set-danger:hover { background: var(--crit); color: #fff; }
+
+/* segmented control, for a choice of three */
+.seg { display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--edge); }
+.seg-btn {
+  font-family: var(--font);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-medium);
+  letter-spacing: .3px;
+  color: var(--muted);
+  background: none; border: none; border-radius: 6px;
+  padding: 4px 9px; cursor: pointer;
+  transition: background 120ms, color 120ms;
+}
+.seg-btn:hover { color: var(--ink); }
+.seg-btn.on { background: var(--bg); color: var(--ink); box-shadow: 0 1px 2px var(--shadow); }
+
+/* switch */
+.toggle {
+  flex: none;
+  width: 34px; height: 19px;
+  border-radius: 999px;
+  border: none;
+  background: color-mix(in srgb, var(--ink) 18%, transparent);
+  cursor: pointer;
+  padding: 0;
+  transition: background 160ms;
+}
+.toggle span {
+  display: block;
+  width: 15px; height: 15px; margin: 2px;
+  border-radius: 50%;
+  /* a fixed light knob rather than var(--bg): in dark mode the background
+     token is nearly black, which reads as a hole punched in the switch */
+  background: #F7F4EC;
+  box-shadow: 0 1px 2px var(--shadow);
+  transition: transform 160ms cubic-bezier(.3,.8,.35,1.1);
+}
+.toggle.on { background: var(--accent); }
+.toggle.on span { transform: translateX(15px); }
+.toggle:disabled { opacity: .4; cursor: default; }
+
+.set-slider { display: flex; align-items: center; gap: 8px; }
+.set-slider input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 108px; height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--ink) 16%, transparent);
+  cursor: pointer;
+}
+.set-slider input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px; height: 13px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 1px 3px var(--shadow);
+}
+.set-num {
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-bold);
+  color: var(--muted);
+  width: 30px; text-align: right;
+}
 
 /* ---------- instrument cluster ---------- */
 
@@ -547,10 +759,7 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 
-.dial-face   { fill: var(--face); stroke: var(--face-edge); stroke-width: 1.5; }
-.dial-zone   { fill: none; stroke-linecap: butt; }
-.dial-zone.off { stroke: var(--dim); }
-.dial-tick   { stroke: var(--tick); stroke-linecap: round; }
+.dial-tick   { stroke: var(--mark); stroke-linecap: round; }
 
 /* open C-ring gauges */
 .ring-track { fill: none; stroke: var(--dim); stroke-linecap: round; }
@@ -558,7 +767,7 @@ html, body {
 
 /* the tach's inner face, which the readout sits on */
 .dial-disc  { fill: var(--face); stroke: var(--face-edge); stroke-width: 1; }
-.dial-tick.major { stroke: var(--tick-lit); }
+.dial-tick.major { stroke: var(--mark-lit); }
 
 .dial-read {
   fill: var(--dial-ink);
@@ -583,25 +792,17 @@ html, body {
   text-anchor: middle;
 }
 .dial-num {
-  fill: var(--tick-lit);
+  fill: var(--mark-lit);
   font-size: var(--fs-sm);
   font-weight: var(--fw-medium);
   text-anchor: middle;
 }
 /* the flanking gauges are smaller, so their numerals scale down with them */
-.dial-num.sm { font-size: var(--fs-micro); fill: var(--tick); }
-
-.dial-ef {
-  fill: var(--tick);
-  font-size: var(--fs-micro);
-  font-weight: var(--fw-bold);
-  text-anchor: middle;
-}
+.dial-num.sm { font-size: var(--fs-micro); fill: var(--mark); }
 
 /* The needle is driven by a spring simulation in app.js, one frame at a time,
    so it must NOT carry a CSS transition — that would lag and fight the physics. */
 .needle-body { stroke-linecap: round; }
-.needle-hub  { fill: var(--face-edge); stroke: var(--tick-lit); stroke-width: 1; }
 
 /* low-quota telltale, styled like a dashboard warning lamp */
 .lamp        { transition: opacity 300ms, fill 300ms; opacity: .16; fill: var(--crit); }
@@ -705,26 +906,46 @@ html, body {
 .odo-drum { flex: 1 1 auto; display: flex; gap: 2px; justify-content: flex-end; }
 
 .odo-digit {
+  display: block;
   position: relative;
   overflow: hidden;
   width: 13px; height: 18px;
   border-radius: 2px;
-  display: flex; align-items: center; justify-content: center;
   background: linear-gradient(180deg,
     #070605 0%, #2b251c 38%, #3a3227 50%, #2b251c 62%, #070605 100%);
   box-shadow: inset 0 0 3px rgba(0,0,0,.9), 0 0 0 1px rgba(0,0,0,.5);
   color: #F4EFE2;
   font-size: var(--fs-md);
   font-weight: var(--fw-bold);
-  line-height: 1;
 }
 
-/* a changed wheel rolls its new face up into view */
-.odo-digit span { display: block; }
-.odo-digit.roll span { animation: drum-roll 340ms cubic-bezier(.3, .7, .3, 1); }
-@keyframes drum-roll {
-  from { transform: translateY(105%); opacity: .25; }
-  to   { transform: translateY(0);    opacity: 1; }
+/* The wheel itself: a column of faces taller than the slot it shows through,
+   moved by transform so only one face is ever in the window. */
+.odo-strip {
+  display: block;
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  will-change: transform;
+}
+/* block, or the faces flow along the line and the slot shows two at once */
+.odo-face {
+  display: block;
+  height: 18px;
+  line-height: 18px;
+  text-align: center;
+}
+
+/* A real drum is only lit across its middle; the faces above and below curve
+   away into the housing. The overlay does that to whichever face is passing. */
+.odo-digit::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg,
+    rgba(0,0,0,.85) 0%, rgba(0,0,0,.15) 28%,
+    rgba(255,255,255,.05) 50%,
+    rgba(0,0,0,.15) 72%, rgba(0,0,0,.85) 100%);
 }
 
 /* the trip meter is the smaller, amber-lit wheel set */
@@ -735,6 +956,7 @@ html, body {
   background: linear-gradient(180deg,
     #070605 0%, #241c12 38%, #322616 50%, #241c12 62%, #070605 100%);
 }
+.odo-trip .odo-face { height: 15px; line-height: 15px; }
 
 .odo-unit {
   flex: none;
@@ -770,7 +992,7 @@ body.mini .mascot-row { gap: 10px; align-items: center; }
 body.mini .mini-only { display: flex; }
 
 /* the pill is small enough that a bobbing face reads as jitter */
-body.mini .mascot { animation: none; font-size: 15px; }
+body.mini .mascot { animation: none; font-size: var(--fs-lg); }
 
 /* Give the two controls a resting chip. Ungrounded glyphs at this size read as
    decoration rather than buttons -- the old hollow square especially. */
@@ -779,7 +1001,7 @@ body.mini .ctl {
   border-radius: 8px;
   background: var(--edge);
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-md);
 }
 body.mini .ctl:hover { background: color-mix(in srgb, var(--ink) 16%, transparent); color: var(--ink); }
 body.mini .ctl-close:hover { background: var(--crit); color: #fff; }
@@ -794,4 +1016,30 @@ body.mini .ctl-close:hover { background: var(--crit); color: #fff; }
   font-size: var(--fs-lg);
   font-weight: var(--fw-bold);
   color: var(--ink);
+}
+
+/* Collapsed, the pill still has to answer both questions the cluster answers:
+   how much is left, and how fast it is going right now. The tank keeps the
+   larger type; the rate rides alongside it behind a divider. */
+.mini-rate {
+  gap: 1px;
+  /* the same size and weight as the tank percentage beside it: they are two
+     readings of equal standing, and two different sizes on one line read as a
+     mistake rather than as a hierarchy */
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-bold);
+  color: var(--ink);
+  white-space: nowrap;
+}
+.mini-rate::before {
+  content: '·';
+  margin-right: 6px;
+  color: var(--faint);
+}
+.mini-rate i {
+  font-style: normal;
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--ls-caps);
+  color: var(--faint);
 }

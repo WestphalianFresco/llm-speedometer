@@ -2,14 +2,24 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <!-- default-src 'none' already denies scripts, styles, images, fonts and
+       every kind of fetch; base-uri and form-action are the two directives it
+       does NOT cover, so they are stated rather than left open. frame-ancestors
+       is deliberately absent: it is ignored when delivered in a meta element,
+       and this window cannot be framed by anything in the first place. -->
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none'; style-src 'self'; script-src 'self'">
+        content="default-src 'none'; style-src 'self'; script-src 'self';
+                 base-uri 'none'; form-action 'none'">
   <title>LLM Speedometer</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div class="card" id="card">
-    <div class="lock" id="lock" hidden>
+    <!-- Visible in the markup, not switched on later: the app always opens here,
+         and starting hidden meant the dashboard painted for a frame before the
+         first payload slammed this over the top of it. -->
+    <div class="lock" id="lock">
+      <button class="ctl ctl-close lock-close" id="lock-close" title="Close">&#10005;</button>
       <div class="fob" id="fob">
         <div class="fob-top">
           <span class="fob-brand">LLM</span>
@@ -32,6 +42,137 @@
       <button class="lock-open" id="lock-open" hidden>Open sign-in page &#8599;</button>
     </div>
 
+    <!-- Settings. Overlays the whole card like the lock screen does, rather
+         than opening a second window: this app is one small always-on-top
+         panel, and a child window would be a second thing to manage. -->
+    <div class="settings" id="settings" hidden>
+      <div class="set-head">
+        <span class="set-title">SETTINGS</span>
+        <button class="ctl" id="set-close" title="Back">&#10005;</button>
+      </div>
+
+      <div class="set-body" id="set-body">
+        <section class="set-group">
+          <h4>Account</h4>
+          <div class="set-row">
+            <span class="set-label">Signed in</span>
+            <span class="set-value" id="set-account">&#8212;</span>
+          </div>
+          <div class="set-row">
+            <span class="set-label">Organization</span>
+            <span class="set-value" id="set-org">&#8212;</span>
+          </div>
+          <div class="set-row">
+            <span class="set-label">Plan</span>
+            <span class="set-value" id="set-plan">&#8212;</span>
+          </div>
+          <div class="set-row">
+            <span class="set-label">Provider</span>
+            <span class="set-value" id="set-provider">&#8212;</span>
+          </div>
+          <div class="set-row">
+            <span class="set-label">Model
+              <em>configured in settings.json</em></span>
+            <span class="set-value" id="set-model">&#8212;</span>
+          </div>
+          <div class="set-row">
+            <span class="set-label">Running
+              <em>what the live session is actually using</em></span>
+            <span class="set-value" id="set-model-live">&#8212;</span>
+          </div>
+          <div class="set-actions">
+            <button class="set-btn" id="set-switch">Switch provider&#8230;</button>
+            <button class="set-btn" id="set-open-account">Open account page &#8599;</button>
+          </div>
+        </section>
+
+        <section class="set-group">
+          <h4>Appearance</h4>
+          <div class="set-row">
+            <span class="set-label">Theme</span>
+            <div class="seg" id="set-theme">
+              <button class="seg-btn" data-theme="system">Auto</button>
+              <button class="seg-btn" data-theme="light">Light</button>
+              <button class="seg-btn" data-theme="dark">Dark</button>
+            </div>
+          </div>
+          <div class="set-row">
+            <span class="set-label">Opacity</span>
+            <div class="set-slider">
+              <input type="range" id="set-opacity" min="55" max="100" step="5">
+              <span class="set-num" id="set-opacity-val">100%</span>
+            </div>
+          </div>
+          <div class="set-row">
+            <span class="set-label">Session list
+              <em>the strip beside the odometer</em></span>
+            <button class="toggle" id="set-sessions" role="switch"><span></span></button>
+          </div>
+        </section>
+
+        <section class="set-group">
+          <h4>Sound</h4>
+          <div class="set-row">
+            <span class="set-label">Engine sounds
+              <em>ignition on refresh, blip on rev</em></span>
+            <button class="toggle" id="set-sound" role="switch"><span></span></button>
+          </div>
+          <div class="set-row">
+            <span class="set-label">Volume</span>
+            <div class="set-slider">
+              <input type="range" id="set-volume" min="0" max="100" step="5">
+              <span class="set-num" id="set-volume-val">80%</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="set-group">
+          <h4>Window</h4>
+          <div class="set-row">
+            <span class="set-label">Always on top</span>
+            <button class="toggle" id="set-ontop" role="switch"><span></span></button>
+          </div>
+          <div class="set-row">
+            <span class="set-label">Start with Windows
+              <em id="set-login-note">available in the installed app</em></span>
+            <button class="toggle" id="set-login" role="switch"><span></span></button>
+          </div>
+        </section>
+
+        <section class="set-group">
+          <h4>Data</h4>
+          <div class="set-row">
+            <span class="set-label">Reading</span>
+            <span class="set-value" id="set-source">&#8212;</span>
+          </div>
+          <div class="set-row">
+            <span class="set-label">Next official poll</span>
+            <span class="set-value" id="set-poll">&#8212;</span>
+          </div>
+          <div class="set-row">
+            <span class="set-label">Local records</span>
+            <span class="set-value" id="set-records">&#8212;</span>
+          </div>
+          <p class="set-note">
+            Usage counts input, cache writes and output. Cache reads are left
+            out — they run around 15&#215; everything else combined and would
+            drown the reading.
+          </p>
+        </section>
+
+        <section class="set-group">
+          <h4>About</h4>
+          <div class="set-row">
+            <span class="set-label">Version</span>
+            <span class="set-value" id="set-version">&#8212;</span>
+          </div>
+          <div class="set-actions">
+            <button class="set-btn set-danger" id="set-reset">Reset settings</button>
+          </div>
+        </section>
+      </div>
+    </div>
+
     <div class="header">
       <div class="hdr-top">
         <div class="brand">
@@ -40,6 +181,7 @@
           <span class="brand-by">By William Fan</span>
         </div>
         <div class="controls">
+          <button class="ctl" id="btn-settings" title="Settings">&#9881;</button>
           <button class="ctl ctl-rev" id="btn-rev" title="Blip the throttle">REV</button>
           <button class="ctl" id="btn-lock" title="Lock / switch provider">&#128274;</button>
           <button class="ctl" id="btn-refresh" title="Refresh">&#10227;</button>
@@ -66,6 +208,7 @@
       <div class="mascot-row">
         <span class="mascot" id="mascot">( &#728;&#8202;&#969;&#8202;&#728; )</span>
         <span class="mini-pct mini-only" id="mini-pct">--</span>
+        <span class="mini-rate mini-only" id="mini-rate"><span id="mini-rate-val">--</span><i>/MIN</i></span>
       </div>
       <div class="mini-controls mini-only">
         <button class="ctl" id="btn-expand" title="Expand">&#10530;</button>

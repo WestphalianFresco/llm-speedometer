@@ -1,12 +1,12 @@
 'use strict'
 const fs = require('fs')
-const os = require('os')
-const path = require('path')
 
 const { claudeSettings } = require('./paths')
 
-const SETTINGS_PATH = claudeSettings()
-const BACKUP_PATH = SETTINGS_PATH + '.speedometer.bak'
+// Resolved per call rather than frozen at import, so a CLAUDE_CONFIG_DIR that
+// only becomes real after launch is still written to the right place.
+const settingsPath = () => claudeSettings()
+const backupPath = () => settingsPath() + '.speedometer.bak'
 
 /**
  * Models offered by the picker.
@@ -34,7 +34,7 @@ function labelFor (value) {
 
 function readSettings () {
   try {
-    return JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8'))
+    return JSON.parse(fs.readFileSync(settingsPath(), 'utf8'))
   } catch {
     return null
   }
@@ -62,7 +62,7 @@ function writeModel (value) {
 
   let raw
   try {
-    raw = fs.readFileSync(SETTINGS_PATH, 'utf8')
+    raw = fs.readFileSync(settingsPath(), 'utf8')
   } catch (err) {
     return { ok: false, reason: err.code === 'ENOENT' ? 'no_settings_file' : 'unreadable' }
   }
@@ -82,15 +82,19 @@ function writeModel (value) {
 
   // Preserve the pre-existing file once, before we ever modify it.
   try {
-    if (!fs.existsSync(BACKUP_PATH)) fs.writeFileSync(BACKUP_PATH, raw)
+    const backup = backupPath()
+    if (!fs.existsSync(backup)) fs.writeFileSync(backup, raw)
   } catch { /* a missing backup must not block the change */ }
 
   settings.model = value
 
-  const tmp = SETTINGS_PATH + '.tmp-' + process.pid
+  const target = settingsPath()
+  const tmp = target + '.tmp-' + process.pid
   try {
-    fs.writeFileSync(tmp, JSON.stringify(settings, null, 2) + '\n')
-    fs.renameSync(tmp, SETTINGS_PATH)
+    // 0o600: this file can carry API keys and hook commands, so the temp copy
+    // must not exist world-readable even for the instant before the rename.
+    fs.writeFileSync(tmp, JSON.stringify(settings, null, 2) + '\n', { mode: 0o600 })
+    fs.renameSync(tmp, target)
   } catch {
     try { fs.unlinkSync(tmp) } catch { /* ignore */ }
     return { ok: false, reason: 'write_failed' }
@@ -119,5 +123,5 @@ function modelFamily (value) {
 
 module.exports = {
   modelFamily,
-  MODEL_OPTIONS, readSettings, readModel, writeModel, labelFor, SETTINGS_PATH, BACKUP_PATH
+  MODEL_OPTIONS, readSettings, readModel, writeModel, labelFor, settingsPath, backupPath
 }

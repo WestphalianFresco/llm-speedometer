@@ -1,13 +1,8 @@
 'use strict'
 const fs = require('fs')
-const os = require('os')
 const path = require('path')
 
 const { claudeProjects, claudeSessions, claudeConfig } = require('./paths')
-
-const SESSIONS_DIR = claudeSessions()
-const PROJECTS_DIR = claudeProjects()
-const CONFIG_PATH = claudeConfig()
 
 // Only the tail of a transcript is needed to learn the model and effort in use,
 // and transcripts grow to megabytes — never read one whole.
@@ -73,40 +68,39 @@ function prettyPlan (tier) {
     .replace(/\b\w/g, c => c.toUpperCase())
 }
 
-/** Every session file currently on disk. */
+/**
+ * Every session file currently on disk, parsed once.
+ *
+ * This used to be two functions that each walked the directory and parsed every
+ * file — one to find the newest, one to search by cwd — so a single render read
+ * the whole set twice. One pass answers both questions.
+ */
 function allSessions () {
+  const dir = claudeSessions()
   let entries
   try {
-    entries = fs.readdirSync(SESSIONS_DIR).filter(f => f.endsWith('.json'))
+    entries = fs.readdirSync(dir).filter(f => f.endsWith('.json'))
   } catch {
     return []
   }
   const out = []
   for (const name of entries) {
     try {
-      out.push(JSON.parse(fs.readFileSync(path.join(SESSIONS_DIR, name), 'utf8')))
-    } catch { /* mid-write file */ }
+      out.push(JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8')))
+    } catch { /* a session file mid-write is not worth failing over */ }
   }
   return out
 }
 
 /** The live session whose state was touched most recently. */
-function newestSession () {
-  let entries
-  try {
-    entries = fs.readdirSync(SESSIONS_DIR).filter(f => f.endsWith('.json'))
-  } catch {
-    return null
-  }
+function newestOf (sessions) {
   let best = null
-  for (const name of entries) {
-    try {
-      const parsed = JSON.parse(fs.readFileSync(path.join(SESSIONS_DIR, name), 'utf8'))
-      const stamp = parsed.updatedAt || parsed.startedAt || 0
-      if (!best || stamp > best.stamp) best = { stamp, data: parsed }
-    } catch { /* a session file mid-write is not worth failing over */ }
+  let bestStamp = -1
+  for (const session of sessions) {
+    const stamp = session.updatedAt || session.startedAt || 0
+    if (stamp > bestStamp) { bestStamp = stamp; best = session }
   }
-  return best ? best.data : null
+  return best
 }
 
 /** Newest transcript across all projects, by mtime. */
@@ -114,13 +108,13 @@ function newestTranscript () {
   let best = null
   let projects
   try {
-    projects = fs.readdirSync(PROJECTS_DIR, { withFileTypes: true })
+    projects = fs.readdirSync(claudeProjects(), { withFileTypes: true })
   } catch {
     return null
   }
   for (const project of projects) {
     if (!project.isDirectory()) continue
-    const dir = path.join(PROJECTS_DIR, project.name)
+    const dir = path.join(claudeProjects(), project.name)
     let names
     try { names = fs.readdirSync(dir) } catch { continue }
     for (const name of names) {
@@ -146,9 +140,13 @@ function readTranscriptTail () {
   try {
     fd = fs.openSync(newest.file, 'r')
     const length = newest.size - start
+    if (length <= 0) return {}
     const buffer = Buffer.allocUnsafe(length)
-    fs.readSync(fd, buffer, 0, length, start)
-    text = buffer.toString('utf8')
+    // only the bytes actually read are transcript; the rest of an uninitialised
+    // buffer is whatever was in that heap page
+    const read = fs.readSync(fd, buffer, 0, length, start)
+    if (read <= 0) return {}
+    text = buffer.toString('utf8', 0, read)
   } catch {
     return {}
   } finally {
@@ -175,13 +173,16 @@ function readTranscriptTail () {
 let planCache = { mtimeMs: -1, value: null }
 
 function readPlan () {
+  // Resolved per call, not at module load: signing into a CLI after this app
+  // started is exactly the case paths.js is written to pick up.
+  const configPath = claudeConfig()
   let stat
-  try { stat = fs.statSync(CONFIG_PATH) } catch { return null }
+  try { stat = fs.statSync(configPath) } catch { return null }
   if (stat.mtimeMs === planCache.mtimeMs) return planCache.value
 
   let value = null
   try {
-    const parsed = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'))
+    const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'))
     const account = parsed && parsed.oauthAccount
     if (account) {
       value = prettyPlan(account.organizationRateLimitTier || account.userRateLimitTier)
@@ -199,7 +200,8 @@ function readPlan () {
  */
 function readSession () {
   const tail = readTranscriptTail()
-  const live = newestSession()
+  const sessions = allSessions()
+  const live = newestOf(sessions)
 
   // The freshest transcript is the better signal for "which session is actually
   // working right now"; several sessions can be alive at once and an idle one
@@ -209,7 +211,7 @@ function readSession () {
   // Name the session that matches the cwd we settled on, not just any session.
   let sessionName = null
   if (cwd) {
-    const match = allSessions().find(sn => sn.cwd === cwd)
+    const match = sessions.find(sn => sn.cwd === cwd)
     if (match) sessionName = match.name || null
   }
   if (!sessionName && live) sessionName = live.name || null

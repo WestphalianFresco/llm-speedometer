@@ -14,5 +14,7 @@ contextBridge.exposeInMainWorld('meter', {
   setModel: value => ipcRenderer.invoke('ui:model', String(value)),
   unlock: vendorId => ipcRenderer.invoke('ui:unlock', String(vendorId)),
   lock: () => ipcRenderer.send('ui:lock'),
-  openVendor: vendorId => ipcRenderer.invoke('ui:open-vendor', String(vendorId))
+  openVendor: vendorId => ipcRenderer.invoke('ui:open-vendor', String(vendorId)),
+  setSetting: (key, value) => ipcRenderer.invoke('ui:setting', String(key), value),
+  resetSettings: () => ipcRenderer.invoke('ui:settings-reset')
 })

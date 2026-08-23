@@ -1,6 +1,5 @@
 'use strict'
 const fs = require('fs')
-const os = require('os')
 const path = require('path')
 
 const { claudeProjects } = require('./paths')
@@ -13,6 +12,10 @@ const RETENTION_MS = SEVEN_DAYS_MS + 24 * 60 * 60 * 1000
 // Trailing window for the live burn-rate needle. Short enough to react to work
 // starting and stopping, long enough not to swing wildly between single turns.
 const RATE_WINDOW_MS = 10 * 60 * 1000
+// Most of a single transcript that is read on first sight. Eight days of one
+// session's turns sits far below this; anything past it is history the
+// retention window would discard on the very next prune.
+const FIRST_READ_CAP = 32 * 1024 * 1024
 
 // USD per million tokens. The subscription quota is not published as a token
 // count, so we use spend as the proxy for "how much of the window did I burn" —
@@ -122,9 +125,19 @@ class LocalProvider {
     const cursor = this.cursors.get(file)
     let start = 0
     if (cursor) {
-      if (stat.size === cursor.offset) return          // untouched
-      if (stat.size > cursor.offset) start = cursor.offset  // appended
-      // stat.size < offset means the file was rotated or rewritten; re-read.
+      // A recycled inode is a different file wearing the same path, so the
+      // saved offset means nothing and the whole thing is read again.
+      const sameFile = cursor.inode === null || cursor.inode === (stat.ino ?? null)
+      if (sameFile) {
+        if (stat.size === cursor.offset) return               // untouched
+        if (stat.size > cursor.offset) start = cursor.offset   // appended
+        // stat.size < offset means rotated or rewritten; re-read from zero.
+      }
+    } else if (stat.size > FIRST_READ_CAP) {
+      // First sight of a long transcript. Only the retention window is ever
+      // used, so reading a hundred megabytes of history costs memory for
+      // nothing — start near the end and drop the partial first line.
+      start = stat.size - FIRST_READ_CAP
     }
 
     let fd
@@ -133,16 +146,25 @@ class LocalProvider {
       const length = stat.size - start
       if (length <= 0) return
       const buffer = Buffer.allocUnsafe(length)
-      fs.readSync(fd, buffer, 0, length, start)
-      const text = buffer.toString('utf8')
+      // readSync can return fewer bytes than asked for — a file truncated under
+      // us is the ordinary case. Decoding the whole buffer regardless would
+      // push uninitialised heap memory through the JSON parser.
+      const read = fs.readSync(fd, buffer, 0, length, start)
+      if (read <= 0) return
+      const text = buffer.toString('utf8', 0, read)
 
       // A transcript is appended to while we read it; the trailing fragment may
       // be a partial line. Stop at the last newline and resume from there.
       const lastNewline = text.lastIndexOf('\n')
-      const complete = lastNewline === -1 ? '' : text.slice(0, lastNewline)
-      const consumed = lastNewline === -1 ? 0 : Buffer.byteLength(complete, 'utf8') + 1
+      if (lastNewline === -1) return
+      const complete = text.slice(0, lastNewline)
+      const consumed = Buffer.byteLength(complete, 'utf8') + 1
 
-      if (complete) for (const line of complete.split('\n')) this._ingestLine(line)
+      const lines = complete.split('\n')
+      // the first line is a fragment whenever we started at an offset we chose
+      // rather than one we previously stopped at
+      if (start > 0 && !cursor) lines.shift()
+      for (const line of lines) this._ingestLine(line)
       this.cursors.set(file, { offset: start + consumed, inode: stat.ino ?? null })
     } finally {
       fs.closeSync(fd)

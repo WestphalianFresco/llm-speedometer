@@ -31,7 +31,8 @@ const nodes = {
   odoTotal: el('odo-total'),
   odoTrip: el('odo-trip'),
   btnCloseMini: el('btn-close-mini'),
-  miniPct: el('mini-pct')
+  miniPct: el('mini-pct'),
+  miniRate: el('mini-rate-val')
 }
 
 // ---------- dial geometry ----------
@@ -68,10 +69,11 @@ const arcPath = (cx, cy, r, a1, a2) => {
  * The tanks read remaining rather than used: a gauge that empties as you drive
  * is the only version of the metaphor that makes sense.
  *
- * One routine draws two gauge kinds:
- *   'tach' - closed dial with tick ring, numerals, inner disc and a needle
- *   'ring' - open arc filled from the E end, readout inside, no needle. At this
- *            size an arc communicates level better than a 20px needle can.
+ * One routine draws two gauge kinds, and all three carry a needle:
+ *   'tach' - closed dial with a full tick ring and numerals
+ *   'ring' - the same dial with an open arc lit from the E end behind the
+ *            needle, so the level is readable both as a swept angle and as a
+ *            length of lit track.
  */
 const DIALS = {
   tank5h: {
@@ -83,6 +85,9 @@ const DIALS = {
     tickOuter: 46, tickInner: 41, majorOuter: 47, majorInner: 40,
     numeralR: 34, numerals: [0, 25, 50, 75, 100], numeralClass: 'sm',
     discR: 22,
+    // shorter and finer than the tach's: it sweeps a smaller face and must not
+    // out-weigh the gauge it is drawn on
+    needleLen: 40, needleTail: 7, needleW: [1.7, 0.7],
     readY: 92, readClass: 'read-lg',
     caption: 'TANK / 5H', capY: 158,
     lamp: { dx: 0, dy: 14 },
@@ -101,7 +106,7 @@ const DIALS = {
     tickOuter: 65, tickInner: 58, majorOuter: 66, majorInner: 54,
     numeralR: 44, numerals: [0, 5000, 10000, 15000, 20000],
     discR: 37,
-    needleLen: 50, needleTail: 9, hubR: 5,
+    needleLen: 50, needleTail: 9,
     readY: 79, readClass: 'read-xl',
     unit: 'TOK / MIN', unitY: 92,
     caption: 'OUTPUT RATE', capY: 158,
@@ -122,6 +127,7 @@ const DIALS = {
     tickOuter: 46, tickInner: 41, majorOuter: 47, majorInner: 40,
     numeralR: 34, numerals: [0, 25, 50, 75, 100], numeralClass: 'sm',
     discR: 22,
+    needleLen: 40, needleTail: 7, needleW: [1.7, 0.7],
     readY: 92, readClass: 'read-lg',
     caption: 'TANK / WEEK', capY: 158,
     lamp: { dx: 0, dy: 14 },
@@ -143,6 +149,31 @@ const angleFor = (dial, value) =>
 function zoneColor (dial, value) {
   for (const zone of dial.zones) if (value <= zone.to) return zone.color
   return dial.zones[dial.zones.length - 1].color
+}
+
+/**
+ * A needle, drawn pointing right at the dial's centre and rotated from there by
+ * the frame loop. Tapered tail-to-tip so it reads as a balanced pointer rather
+ * than a stick, and always built into the group BEFORE the inner disc so the
+ * tail disappears under it.
+ */
+function buildNeedle (dial) {
+  const needle = svgEl('g', { class: 'needle' })
+  needle.style.transformOrigin = dial.cx + 'px ' + dial.cy + 'px'
+  const [tailW, tipW] = dial.needleW || [2.2, 0.8]
+  const tailX = dial.cx - dial.needleTail
+  const tipX = dial.cx + dial.needleLen
+  needle.appendChild(svgEl('polygon', {
+    points: [
+      tailX + ',' + (dial.cy - tailW),
+      tipX + ',' + (dial.cy - tipW),
+      tipX + ',' + (dial.cy + tipW),
+      tailX + ',' + (dial.cy + tailW)
+    ].join(' '),
+    class: 'needle-body',
+    fill: 'var(--needle)'
+  }))
+  return needle
 }
 
 function buildRing (dial) {
@@ -175,10 +206,8 @@ function buildRing (dial) {
     g.appendChild(line)
   }
 
-  // and the same inner face the readout sits on
-  g.appendChild(svgEl('circle', { cx: dial.cx, cy: dial.cy, r: dial.discR, class: 'dial-disc' }))
-
-  // numerals on the scale, same treatment as the tach carries
+  // numerals on the scale, same treatment as the tach carries — laid down
+  // before the needle so it sweeps over them rather than under, as on the tach
   if (dial.numerals) {
     for (const value of dial.numerals) {
       const p = polar(dial.cx, dial.cy, dial.numeralR, angleFor(dial, value))
@@ -190,6 +219,12 @@ function buildRing (dial) {
       g.appendChild(t)
     }
   }
+
+  const needle = buildNeedle(dial)
+  g.appendChild(needle)
+
+  // and the same inner face the readout sits on, over the needle's tail
+  g.appendChild(svgEl('circle', { cx: dial.cx, cy: dial.cy, r: dial.discR, class: 'dial-disc' }))
 
   const readout = svgEl('text', {
     x: dial.cx, y: dial.readY, class: 'dial-read ' + dial.readClass
@@ -209,7 +244,7 @@ function buildRing (dial) {
     g.appendChild(lamp)
   }
 
-  return { g: g, needle: null, readout: readout, lamp: lamp, fill: fill }
+  return { g: g, needle: needle, readout: readout, lamp: lamp, fill: fill }
 }
 
 function buildTach (dial) {
@@ -238,20 +273,7 @@ function buildTach (dial) {
     g.appendChild(t)
   }
 
-  const needle = svgEl('g', { class: 'needle' })
-  needle.style.transformOrigin = dial.cx + 'px ' + dial.cy + 'px'
-  const tailX = dial.cx - dial.needleTail
-  const tipX = dial.cx + dial.needleLen
-  needle.appendChild(svgEl('polygon', {
-    points: [
-      tailX + ',' + (dial.cy - 2.2),
-      tipX + ',' + (dial.cy - 0.8),
-      tipX + ',' + (dial.cy + 0.8),
-      tailX + ',' + (dial.cy + 2.2)
-    ].join(' '),
-    class: 'needle-body',
-    fill: 'var(--dial-ink)'
-  }))
+  const needle = buildNeedle(dial)
   g.appendChild(needle)
 
   // disc goes on last of the moving parts, so the needle vanishes under it
@@ -509,7 +531,6 @@ function renderHeader (session, appVersion) {
 // ---------- render ----------
 
 let latest = null
-let dataArrived = false
 
 function renderTank (key, window) {
   const usedPercent = window ? window.percent : null
@@ -532,13 +553,17 @@ function renderTank (key, window) {
 
 function render (data) {
   latest = data
-  dataArrived = true
 
   // speedometer — live consumption, always available from local transcripts
+  // A blip owns the tach until it finishes; a poll landing mid-rev must not
+  // yank the needle out of the sweep. The blip reads `latest` when it settles,
+  // so it lands on this rate anyway.
   const rate = data.tokensPerMinute || 0
-  setNeedle('tach', rate)
-  setNeedleIdle('tach', false)
-  cluster.tach.readout.textContent = formatRate(rate)
+  if (!revActive) {
+    setNeedle('tach', rate)
+    setNeedleIdle('tach', false)
+    cluster.tach.readout.textContent = formatRate(rate)
+  }
 
   renderTank('tank5h', data.fiveHour)
   renderTank('tankWeek', data.sevenDay)
@@ -560,11 +585,14 @@ function render (data) {
   nodes.miniPct.textContent = data.fiveHour.percent === null
     ? '--'
     : (100 - data.fiveHour.percent).toFixed(0) + '%'
+  // the speedometer's reading, carried into the collapsed pill
+  nodes.miniRate.textContent = formatRate(rate)
 
   renderHeader(data.session, data.appVersion)
   renderModelChip(data)
   renderTasks(data)
   renderOdometer(data)
+  renderSettings(data)
   syncCollapsed(data)
   renderLock(data)
 
@@ -891,11 +919,21 @@ function syncCollapsed (data) {
   }
 }
 
+// The panel is painted at launch, so it is only ever "entering" when it comes
+// back after an unlock — which is the one time it should animate.
+let wasUnlocked = false
+
 function renderLock (data) {
   if (!vendorsBuilt && data.vendors) buildVendors(data.vendors)
   if (unlockAnimating) return
 
   const locked = !data.unlocked
+  if (locked && wasUnlocked) {
+    nodes.lock.classList.remove('entering')
+    void nodes.lock.offsetWidth
+    nodes.lock.classList.add('entering')
+  }
+  wasUnlocked = !locked
   nodes.lock.toggleAttribute('hidden', !locked)
   if (locked) {
     // clear the exit animation, or the panel returns already faded out
@@ -907,39 +945,87 @@ function renderLock (data) {
 /**
  * Odometer, mechanical style.
  *
- * Digits are zero-padded to a fixed width and rendered one drum face per cell,
- * so the reading keeps a constant footprint as it climbs. Only cells whose
- * digit actually changed get the roll animation — repainting every wheel on
- * each tick would look like a slot machine rather than an odometer.
+ * Each digit is a drum: a strip of faces behind a slot, translated so the face
+ * you want sits in the window. A wheel going 7 -> 2 therefore rolls up through
+ * 8, 9, 0, 1 and stops on 2, the way a real one has to — it cannot get there
+ * any other way. The strip carries two runs of 0-9 so a wrap has somewhere to
+ * roll into, and snaps silently back to the single-run position afterwards.
+ *
+ * The wheels do not all go at once either. On a real odometer a wheel only
+ * turns when the one to its right carries into it, so each place starts a beat
+ * later than its neighbour and the change ripples leftward.
  */
 const ODO_DIGITS = 9
 const TRIP_DIGITS = 7
 
+const DRUM_FACES = 20            // 0-9 twice, so a 9 -> 0 wrap has road ahead
+const DRUM_STAGGER_MS = 80       // how far each place lags the one to its right
+const DRUM_BASE_MS = 180
+const DRUM_STEP_MS = 55          // added per digit the wheel has to travel
+const DRUM_MAX_MS = 900
+const DRUM_MAX_DELAY_MS = 400    // a nine-wide cascade must not crawl
+
+// Percentages on transform resolve against the element's own height, so a
+// strip of 20 faces moves exactly one face per 5% — no measuring required.
+const drumPos = index => 'translateY(-' + (index * (100 / DRUM_FACES)) + '%)'
+
 // last rendered string per drum, so we can tell which wheels moved
 const drumState = new Map()
 
+function buildDrum (container, width) {
+  container.textContent = ''
+  for (let i = 0; i < width; i++) {
+    const cell = document.createElement('span')
+    cell.className = 'odo-digit'
+    const strip = document.createElement('span')
+    strip.className = 'odo-strip'
+    for (let f = 0; f < DRUM_FACES; f++) {
+      const face = document.createElement('span')
+      face.className = 'odo-face'
+      face.textContent = String(f % 10)
+      strip.appendChild(face)
+    }
+    strip.style.transform = drumPos(0)
+    cell.appendChild(strip)
+    container.appendChild(cell)
+  }
+}
+
+function rollCell (cell, from, to, delay) {
+  const dist = (to - from + 10) % 10
+  if (dist === 0) return
+  const strip = cell.firstChild
+  const duration = Math.min(DRUM_MAX_MS, DRUM_BASE_MS + dist * DRUM_STEP_MS)
+
+  // park on the face we are leaving before arming the transition, or a wheel
+  // caught mid-roll would animate from wherever it happened to be
+  strip.style.transition = 'none'
+  strip.style.transform = drumPos(from)
+  void strip.offsetWidth
+  strip.style.transition =
+    'transform ' + duration + 'ms cubic-bezier(.25,.8,.3,1) ' + delay + 'ms'
+  strip.style.transform = drumPos(from + dist)
+
+  // Landing on the second run of faces is only ever a stand-in for the first;
+  // drop back to the real position once the eye is done with the movement.
+  clearTimeout(cell.snapTimer)
+  cell.snapTimer = setTimeout(() => {
+    strip.style.transition = 'none'
+    strip.style.transform = drumPos(to)
+  }, delay + duration + 20)
+}
+
 function paintDrum (container, value, width) {
   const text = String(Math.max(0, Math.round(value))).padStart(width, '0').slice(-width)
-  const previous = drumState.get(container.id) || ''
+  // A drum with no history starts from all zeroes rather than from nothing, so
+  // the first reading winds up into place instead of appearing fully formed.
+  const previous = drumState.get(container.id) || '0'.repeat(width)
 
-  if (container.children.length !== width) {
-    container.textContent = ''
-    for (let i = 0; i < width; i++) {
-      const cell = document.createElement('span')
-      cell.className = 'odo-digit'
-      cell.appendChild(document.createElement('span'))
-      container.appendChild(cell)
-    }
-  }
+  if (container.children.length !== width) buildDrum(container, width)
 
   for (let i = 0; i < width; i++) {
-    const cell = container.children[i]
-    const digit = text[i]
-    if (previous[i] === digit) continue
-    cell.firstChild.textContent = digit
-    cell.classList.remove('roll')
-    void cell.offsetWidth
-    cell.classList.add('roll')
+    const delay = Math.min(DRUM_MAX_DELAY_MS, (width - 1 - i) * DRUM_STAGGER_MS)
+    rollCell(container.children[i], Number(previous[i]), Number(text[i]), delay)
   }
 
   drumState.set(container.id, text)
@@ -973,6 +1059,14 @@ function buildTooltip (data) {
   lines.push('5-hour window spend   $' + data.spend.fiveHour.toFixed(2))
   lines.push('Weekly window spend   $' + data.spend.sevenDay.toFixed(2))
   lines.push('Local records         ' + data.localEvents)
+  // Spelled out because the footer can only count down one window at a time,
+  // and which one it picked is otherwise invisible.
+  lines.push('5-hour resets         ' + (data.fiveHour.resetsAt
+    ? new Date(data.fiveHour.resetsAt).toLocaleTimeString()
+    : 'unknown until the next official poll'))
+  lines.push('Weekly resets         ' + (data.sevenDay.resetsAt
+    ? new Date(data.sevenDay.resetsAt).toLocaleString()
+    : 'unknown until the next official poll'))
   lines.push(data.fiveHour.anchorAt
     ? 'Official anchor       ' + Math.round((Date.now() - data.fiveHour.anchorAt) / 60000) + ' min ago'
     : 'Official anchor       none yet')
@@ -984,12 +1078,20 @@ function buildTooltip (data) {
 }
 
 // Countdown ticks locally so the widget feels alive between polls.
+//
+// The two windows reset on completely different cadences, so the countdown has
+// to say which one it is counting. It used to fall through to the weekly reset
+// whenever the 5-hour reset was unknown and print the result bare — which read
+// as the 5-hour window being five days away.
 function tickCountdown () {
   if (!latest) return
-  const resetsAt = latest.fiveHour.resetsAt || latest.sevenDay.resetsAt
-  nodes.reset.textContent = resetsAt
-    ? '⟳ ' + formatCountdown(resetsAt - Date.now())
-    : '⟳ reset time unknown'
+  const now = Date.now()
+  const five = latest.fiveHour.resetsAt
+  const week = latest.sevenDay.resetsAt
+
+  if (five) nodes.reset.textContent = '⟳ 5H · ' + formatCountdown(five - now)
+  else if (week) nodes.reset.textContent = '⟳ WEEK · ' + formatCountdown(week - now)
+  else nodes.reset.textContent = '⟳ reset time unknown'
 }
 // ticks every second now that the countdown is second-accurate
 setInterval(tickCountdown, 1000)
@@ -1005,88 +1107,497 @@ setInterval(tickCountdown, 1000)
  * page's content policy to block.
  */
 let audioCtx = null
+let audioOut = null
 let revActive = false
+
+// Everything audible routes through one gain node, so the volume slider and
+// the mute switch have a single place to act rather than each voice carrying
+// its own copy of the preference.
+let soundEnabled = true
+let soundVolume = 0.8
 
 function getAudio () {
   if (!audioCtx) {
     const Ctor = window.AudioContext || window.webkitAudioContext
     if (!Ctor) return null
     audioCtx = new Ctor()
+    audioOut = audioCtx.createGain()
+    audioOut.gain.value = soundEnabled ? soundVolume : 0
+    audioOut.connect(audioCtx.destination)
   }
   if (audioCtx.state === 'suspended') audioCtx.resume()
   return audioCtx
 }
 
-function playRev () {
+/** The node every voice connects to instead of ctx.destination. */
+const audioBus = ctx => audioOut || ctx.destination
+
+function setSoundLevel (enabled, volume) {
+  soundEnabled = enabled
+  soundVolume = volume
+  if (!audioOut) return
+  const t = audioCtx.currentTime
+  holdParam(audioOut.gain, t)
+  audioOut.gain.linearRampToValueAtTime(enabled ? volume : 0, t + 0.08)
+}
+
+// White noise is the raw material for both the induction roar and the
+// starter's brush hiss; the character comes from the filter each one runs it
+// through, not from the sample.
+function noiseSource (ctx, seconds) {
+  const frames = Math.floor(ctx.sampleRate * seconds)
+  const buffer = ctx.createBuffer(1, frames, ctx.sampleRate)
+  const data = buffer.getChannelData(0)
+  for (let i = 0; i < frames; i++) data[i] = Math.random() * 2 - 1
+  const source = ctx.createBufferSource()
+  source.buffer = buffer
+  return source
+}
+
+/**
+ * The engine as a voice that can be held, not a fixed-length clip.
+ *
+ * Blipping once starts it, lets it run up, and releases it; keeping the button
+ * pressed holds it against the limiter for as long as you keep asking, exactly
+ * like a throttle. That only works if the sound is a running instrument with a
+ * stop, so the nodes live in `revVoice` until the throttle is released.
+ */
+let revVoice = null
+
+// Take over a param that has automation scheduled on it without the jump that
+// a bare setValueAtTime would cause.
+function holdParam (param, t) {
+  if (param.cancelAndHoldAtTime) param.cancelAndHoldAtTime(t)
+  else {
+    param.cancelScheduledValues(t)
+    param.setValueAtTime(param.value, t)
+  }
+}
+
+const REV_RISE = 0.30   // seconds from idle to the limiter
+
+function revVoiceStart () {
   const ctx = getAudio()
   if (!ctx) return
+  if (revVoice) { revVoiceKick(); return }
   const t0 = ctx.currentTime
-  const peak = t0 + 0.34
-  const hold = t0 + 0.62
-  const end = t0 + 1.25
+  const up = t0 + REV_RISE
 
   const out = ctx.createGain()
   out.gain.setValueAtTime(0.0001, t0)
-  out.gain.exponentialRampToValueAtTime(0.20, t0 + 0.07)
-  out.gain.setValueAtTime(0.20, hold)
-  out.gain.exponentialRampToValueAtTime(0.0001, end)
-  out.connect(ctx.destination)
+  out.gain.exponentialRampToValueAtTime(0.20, up)
+  out.connect(audioBus(ctx))
 
   const tone = ctx.createBiquadFilter()
   tone.type = 'lowpass'
   tone.Q.value = 6
   tone.frequency.setValueAtTime(380, t0)
-  tone.frequency.exponentialRampToValueAtTime(3600, peak)
-  tone.frequency.setValueAtTime(3600, hold)
-  tone.frequency.exponentialRampToValueAtTime(520, end)
+  tone.frequency.exponentialRampToValueAtTime(3600, up)
   tone.connect(out)
 
   // engine body: two saws a few cents apart beat against each other
+  const oscs = []
   for (const detune of [0, 7]) {
     const osc = ctx.createOscillator()
     osc.type = 'sawtooth'
     osc.detune.value = detune
     osc.frequency.setValueAtTime(72, t0)
-    osc.frequency.exponentialRampToValueAtTime(330, peak)
-    osc.frequency.setValueAtTime(330, hold)
-    osc.frequency.exponentialRampToValueAtTime(88, end)
+    osc.frequency.exponentialRampToValueAtTime(330, up)
     osc.connect(tone)
     osc.start(t0)
-    osc.stop(end + 0.05)
+    oscs.push(osc)
   }
 
-  // induction roar
-  const frames = Math.floor(ctx.sampleRate * 1.3)
-  const buffer = ctx.createBuffer(1, frames, ctx.sampleRate)
-  const data = buffer.getChannelData(0)
-  for (let i = 0; i < frames; i++) data[i] = Math.random() * 2 - 1
-  const noise = ctx.createBufferSource()
-  noise.buffer = buffer
+  // held against the limiter the note chops rather than holding flat — this is
+  // the stutter you hear from a car sitting on its rev limit
+  const chop = ctx.createOscillator()
+  chop.type = 'square'
+  chop.frequency.value = 9
+  const chopDepth = ctx.createGain()
+  chopDepth.gain.value = 0.045
+  chop.connect(chopDepth)
+  chopDepth.connect(out.gain)
+  chop.start(up)
+
+  // induction roar, looped for as long as the throttle is held
+  const noise = noiseSource(ctx, 1.5)
+  noise.loop = true
   const band = ctx.createBiquadFilter()
   band.type = 'bandpass'
   band.Q.value = 1.1
   band.frequency.setValueAtTime(500, t0)
-  band.frequency.exponentialRampToValueAtTime(2200, peak)
-  band.frequency.exponentialRampToValueAtTime(600, end)
+  band.frequency.exponentialRampToValueAtTime(2200, up)
   const noiseGain = ctx.createGain()
   noiseGain.gain.setValueAtTime(0.0001, t0)
-  noiseGain.gain.exponentialRampToValueAtTime(0.075, peak)
-  noiseGain.gain.exponentialRampToValueAtTime(0.0001, end)
-  noise.connect(band); band.connect(noiseGain); noiseGain.connect(ctx.destination)
+  noiseGain.gain.exponentialRampToValueAtTime(0.075, up)
+  noise.connect(band); band.connect(noiseGain); noiseGain.connect(audioBus(ctx))
   noise.start(t0)
-  noise.stop(end + 0.05)
+
+  revVoice = { ctx: ctx, out: out, tone: tone, oscs: oscs, chop: chop, noise: noise, band: band, noiseGain: noiseGain }
 }
 
+// Another click while it is already up there is a stab of throttle against a
+// spinning engine, not a fresh start — a short bark on top of the running note.
+function revVoiceKick () {
+  if (!revVoice) return
+  const ctx = revVoice.ctx
+  const t = ctx.currentTime
+  const bump = t + 0.06
+  const back = t + 0.22
+  holdParam(revVoice.tone.frequency, t)
+  revVoice.tone.frequency.exponentialRampToValueAtTime(5200, bump)
+  revVoice.tone.frequency.exponentialRampToValueAtTime(3600, back)
+  holdParam(revVoice.out.gain, t)
+  revVoice.out.gain.exponentialRampToValueAtTime(0.26, bump)
+  revVoice.out.gain.exponentialRampToValueAtTime(0.20, back)
+}
+
+function revVoiceStop () {
+  const v = revVoice
+  if (!v) return
+  revVoice = null
+  const t = v.ctx.currentTime
+  const end = t + 0.62
+
+  holdParam(v.out.gain, t)
+  v.out.gain.exponentialRampToValueAtTime(0.0001, end)
+  holdParam(v.tone.frequency, t)
+  v.tone.frequency.exponentialRampToValueAtTime(520, end)
+  for (const osc of v.oscs) {
+    holdParam(osc.frequency, t)
+    osc.frequency.exponentialRampToValueAtTime(88, end)
+    osc.stop(end + 0.05)
+  }
+  holdParam(v.band.frequency, t)
+  v.band.frequency.exponentialRampToValueAtTime(600, end)
+  holdParam(v.noiseGain.gain, t)
+  v.noiseGain.gain.exponentialRampToValueAtTime(0.0001, end)
+  v.noise.stop(end + 0.05)
+  v.chop.stop(end)
+}
+
+/**
+ * The snore.
+ *
+ * Refreshing wakes the thing up, so it complains about it. This is the AUGHHH
+ * snore synthesised rather than sampled: no audio file to ship, nothing lifted
+ * from someone else's upload, and nothing for the page's content policy to
+ * block.
+ *
+ * A snore is a voice, not an instrument, so it is built like one — a buzzy
+ * glottal source at speaking pitch, chopped by the flutter of the soft palate,
+ * pushed through three bandpass filters parked on vowel formants. Sweeping
+ * those formants from "ah" toward "uh" is what makes it read as AUGHHH rather
+ * than as a rude noise.
+ */
+const SNORE_MS = 1450
+
+function playSnore () {
+  const ctx = getAudio()
+  if (!ctx) return
+  const t0 = ctx.currentTime
+  const peak = t0 + 0.13
+  const held = t0 + 0.78
+  const end = t0 + SNORE_MS / 1000
+
+  const master = ctx.createGain()
+  master.gain.setValueAtTime(0.0001, t0)
+  master.gain.exponentialRampToValueAtTime(0.5, peak)     // the AUGH, straight in
+  master.gain.setValueAtTime(0.5, held)
+  master.gain.exponentialRampToValueAtTime(0.0001, end)   // trailing off into hhh
+  master.connect(audioBus(ctx))
+
+  // The soft palate flapping. This is the whole difference between a snore and
+  // a groan: without the flutter it is just a vowel.
+  const flutterDepth = ctx.createGain()
+  flutterDepth.gain.value = 0.42
+  const flutter = ctx.createOscillator()
+  flutter.type = 'sine'
+  flutter.frequency.setValueAtTime(31, t0)
+  flutter.frequency.linearRampToValueAtTime(17, end)      // slows as it sags
+  flutter.connect(flutterDepth)
+  flutter.start(t0)
+  flutter.stop(end)
+
+  const throat = ctx.createGain()
+  throat.gain.value = 0.5                                 // the flutter rides on this
+  flutterDepth.connect(throat.gain)
+
+  // glottal source: pitched speech, falling the way a sleeper's does
+  const voice = ctx.createOscillator()
+  voice.type = 'sawtooth'
+  voice.frequency.setValueAtTime(152, t0)
+  voice.frequency.exponentialRampToValueAtTime(97, t0 + 0.4)
+  voice.frequency.exponentialRampToValueAtTime(72, end)
+  voice.connect(throat)
+  voice.start(t0)
+  voice.stop(end + 0.05)
+
+  // Vowel formants, swept "ah" -> "uh". These are the real first three formants
+  // of those vowels, which is why it lands as a word-ish noise rather than a
+  // filter sweep.
+  const formant = (from, to, q, level) => {
+    const bp = ctx.createBiquadFilter()
+    bp.type = 'bandpass'
+    bp.Q.value = q
+    bp.frequency.setValueAtTime(from, t0)
+    bp.frequency.linearRampToValueAtTime(to, end)
+    const gain = ctx.createGain()
+    gain.gain.value = level
+    throat.connect(bp)
+    bp.connect(gain)
+    gain.connect(master)
+  }
+  formant(730, 500, 6, 1)       // F1
+  formant(1090, 980, 9, 0.5)    // F2
+  formant(2560, 2400, 8, 0.16)  // F3, the bit that stops it sounding muffled
+
+  // breath: quiet under the vowel, then the whole tail once the voice drops out
+  const breath = noiseSource(ctx, SNORE_MS / 1000 + 0.2)
+  const nose = ctx.createBiquadFilter()
+  nose.type = 'bandpass'
+  nose.Q.value = 0.8
+  nose.frequency.setValueAtTime(1500, t0)
+  nose.frequency.exponentialRampToValueAtTime(2600, end)
+  const breathGain = ctx.createGain()
+  breathGain.gain.setValueAtTime(0.0001, t0)
+  breathGain.gain.exponentialRampToValueAtTime(0.05, peak)
+  breathGain.gain.setValueAtTime(0.05, held)
+  breathGain.gain.exponentialRampToValueAtTime(0.09, end - 0.18)   // the hhh
+  breathGain.gain.exponentialRampToValueAtTime(0.0001, end)
+  // the flutter chops the breath too, or the two layers drift apart
+  flutterDepth.connect(breathGain.gain)
+  breath.connect(nose); nose.connect(breathGain); breathGain.connect(master)
+  breath.start(t0)
+  breath.stop(end + 0.05)
+}
+
+/* How long one press keeps the throttle open. Pressing again inside this
+   window extends it rather than restarting a fresh blip, so leaning on the
+   button holds the engine up the way a real one stays up.
+   Net of the ~300ms it takes to climb, this is the time spent up at the top,
+   which is the part of a blip worth hearing. */
+const REV_HOLD_MS = 1150
+// After release: the needle falls, the note drops, and only then does the
+// gauge go back to reporting.
+const REV_FALL_MS = 700
+// The limiter does not hold a perfectly steady number — it bounces between
+// full scale and a little under it, which is what keeps the needle alive at
+// the top instead of pinned like a stuck gauge.
+const LIMITER_MS = 150
+// Shallow on purpose: the spring only partly follows a target this brief, so a
+// deep dip would swing the needle several degrees and flick the digits back
+// and forth across the 19k/20k rounding boundary. This flutters and holds.
+const LIMITER_DIP = 0.97
+
+let revHoldTimer = null
+let revFallTimer = null
+let revLimiterTimer = null
+let revPreTarget = 0
+
 function revEngine () {
-  playRev()
+  const alreadyUp = revActive
+  // Where the needle came from, as the fallback for a blip before any data has
+  // landed. A blip drops back to the live rate, not to an invented idle mark —
+  // settling on a number the gauge never measured read as the needle sticking.
+  if (!alreadyUp) revPreTarget = dialState.tach.target
+
   revActive = true
-  setNeedle('tach', DIALS.tach.max)
-  setTimeout(() => { setNeedle('tach', DIALS.tach.max * 0.18) }, 620)
-  setTimeout(() => {
+  clearTimeout(revHoldTimer)
+  clearTimeout(revFallTimer)
+
+  // Start decides for itself whether this is a fresh start or a stab of
+  // throttle at a running engine — asking `alreadyUp` would go silent for a
+  // click that lands after the voice stopped but before the fall completes.
+  revVoiceStart()
+
+  if (!revLimiterTimer) {
+    setNeedle('tach', DIALS.tach.max)
+    let high = true
+    revLimiterTimer = setInterval(() => {
+      high = !high
+      setNeedle('tach', high ? DIALS.tach.max : DIALS.tach.max * LIMITER_DIP)
+    }, LIMITER_MS)
+  }
+
+  revHoldTimer = setTimeout(revRelease, REV_HOLD_MS)
+}
+
+function revRelease () {
+  clearInterval(revLimiterTimer)
+  revLimiterTimer = null
+  setNeedle('tach', latest ? latest.tokensPerMinute || 0 : revPreTarget)
+  revVoiceStop()
+  revFallTimer = setTimeout(() => {
     revActive = false
     if (latest) render(latest)
-  }, 1250)
+  }, REV_FALL_MS)
 }
+
+// ---------- settings ----------
+
+/**
+ * The panel is a view onto two different things: preferences, which live in
+ * main and come back on every push, and read-only facts about the current
+ * reading. Both are repainted from the payload, so the panel can never drift
+ * out of step with what the app is actually doing.
+ */
+const setNodes = {
+  panel: el('settings'),
+  close: el('set-close'),
+  account: el('set-account'),
+  org: el('set-org'),
+  plan: el('set-plan'),
+  modelLive: el('set-model-live'),
+  provider: el('set-provider'),
+  model: el('set-model'),
+  switch: el('set-switch'),
+  openAccount: el('set-open-account'),
+  theme: el('set-theme'),
+  opacity: el('set-opacity'),
+  opacityVal: el('set-opacity-val'),
+  sessions: el('set-sessions'),
+  sound: el('set-sound'),
+  volume: el('set-volume'),
+  volumeVal: el('set-volume-val'),
+  ontop: el('set-ontop'),
+  login: el('set-login'),
+  loginNote: el('set-login-note'),
+  source: el('set-source'),
+  poll: el('set-poll'),
+  records: el('set-records'),
+  version: el('set-version'),
+  reset: el('set-reset')
+}
+
+const setToggle = (node, on) => node.classList.toggle('on', Boolean(on))
+
+// Live-dragging a slider must not be interrupted by the 20-second push
+// repainting it from a value the user has already moved past.
+const holdsFocus = node => document.activeElement === node
+
+function renderSettings (data) {
+  const s = data.settings
+  if (!s) return
+
+  // The plan comes off the session, not the account: account.js reads only the
+  // display identity out of Claude's config, while the rate-limit tier the plan
+  // name is derived from is read by session.js. This row asked `account` for it
+  // and so could only ever say "unknown".
+  const account = data.account || {}
+  const session = data.session || {}
+  setNodes.account.textContent = account.email || 'not detected'
+  setNodes.account.title = account.email || ''
+  setNodes.org.textContent = account.org || 'personal'
+  setNodes.plan.textContent = session.plan || 'not detected'
+  setNodes.provider.textContent = vendorLabel(data)
+  setNodes.model.textContent = data.configuredModel || '—'
+  // what settings.json asks for can differ from what the live session runs
+  setNodes.modelLive.textContent = session.model || '—'
+  setNodes.modelLive.title = session.modelId || ''
+
+  for (const btn of setNodes.theme.children) {
+    btn.classList.toggle('on', btn.dataset.theme === s.theme)
+  }
+
+  if (!holdsFocus(setNodes.opacity)) setNodes.opacity.value = Math.round(s.opacity * 100)
+  setNodes.opacityVal.textContent = Math.round(s.opacity * 100) + '%'
+  if (!holdsFocus(setNodes.volume)) setNodes.volume.value = Math.round(s.volume * 100)
+  setNodes.volumeVal.textContent = Math.round(s.volume * 100) + '%'
+
+  setToggle(setNodes.sessions, s.showSessions)
+  setToggle(setNodes.sound, s.sound)
+  setToggle(setNodes.ontop, s.alwaysOnTop)
+  setToggle(setNodes.login, s.openAtLogin)
+
+  // Registering a login item only means anything for an installed copy; say so
+  // rather than offering a switch that silently does nothing.
+  setNodes.login.disabled = !data.canOpenAtLogin
+  setNodes.loginNote.hidden = Boolean(data.canOpenAtLogin)
+
+  document.body.classList.toggle('no-sessions', !s.showSessions)
+  setSoundLevel(s.sound, s.volume)
+
+  setNodes.source.textContent = data.official && data.official.backingOff
+    ? 'local estimate (API throttled)'
+    : data.fiveHour.source
+  const nextPoll = data.official ? data.official.nextPollAt : 0
+  setNodes.poll.textContent = nextPoll > Date.now()
+    ? 'in ' + Math.ceil((nextPoll - Date.now()) / 60000) + ' min'
+    : 'due now'
+  setNodes.records.textContent = String(data.localEvents)
+  setNodes.version.textContent = data.appVersion ? 'v' + data.appVersion : '—'
+}
+
+function vendorLabel (data) {
+  const match = (data.vendors || []).find(v => v.id === data.vendor)
+  return (match && match.name) || data.vendor || '—'
+}
+
+function openSettings () {
+  if (latest) renderSettings(latest)
+  setNodes.panel.removeAttribute('hidden')
+}
+
+const closeSettings = () => setNodes.panel.setAttribute('hidden', '')
+
+const saveSetting = (key, value) => {
+  window.meter.setSetting(key, value).then(result => {
+    if (result && result.ok && latest) {
+      latest.settings = result.settings
+      renderSettings(latest)
+    }
+  }).catch(() => {})
+}
+
+el('btn-settings').addEventListener('click', openSettings)
+setNodes.close.addEventListener('click', closeSettings)
+
+setNodes.theme.addEventListener('click', e => {
+  const btn = e.target.closest('.seg-btn')
+  if (btn) saveSetting('theme', btn.dataset.theme)
+})
+
+// `input` rather than `change`, so the window fades as the slider moves
+setNodes.opacity.addEventListener('input', e => {
+  setNodes.opacityVal.textContent = e.target.value + '%'
+  saveSetting('opacity', Number(e.target.value) / 100)
+})
+setNodes.volume.addEventListener('input', e => {
+  setNodes.volumeVal.textContent = e.target.value + '%'
+  saveSetting('volume', Number(e.target.value) / 100)
+})
+// releasing the volume slider plays the blip, so the level can be judged by ear
+setNodes.volume.addEventListener('change', () => { if (soundEnabled) revEngine() })
+
+const toggleSetting = (node, key) => node.addEventListener('click', () => {
+  saveSetting(key, !node.classList.contains('on'))
+})
+toggleSetting(setNodes.sessions, 'showSessions')
+toggleSetting(setNodes.sound, 'sound')
+toggleSetting(setNodes.ontop, 'alwaysOnTop')
+toggleSetting(setNodes.login, 'openAtLogin')
+
+setNodes.switch.addEventListener('click', () => {
+  closeSettings()
+  window.meter.lock()
+})
+setNodes.openAccount.addEventListener('click', () => {
+  if (latest && latest.vendor) window.meter.openVendor(latest.vendor)
+})
+setNodes.reset.addEventListener('click', () => {
+  window.meter.resetSettings().then(result => {
+    if (result && result.ok && latest) {
+      latest.settings = result.settings
+      renderSettings(latest)
+    }
+  }).catch(() => {})
+})
+
+// Escape backs out of the panel, the way it backs out of the model menu.
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !setNodes.panel.hasAttribute('hidden')) closeSettings()
+})
 
 // ---------- wiring ----------
 
@@ -1102,19 +1613,31 @@ nodes.mascot.addEventListener('animationend', e => {
 })
 
 el('btn-rev').addEventListener('click', revEngine)
+let crankTimer = null
 el('btn-refresh').addEventListener('click', e => {
   const btn = e.currentTarget
-  btn.classList.add('spinning')
-  setTimeout(() => btn.classList.remove('spinning'), 640)
+  // The icon keeps turning for as long as the snore lasts, so the spin reads as
+  // the thing making the noise rather than running alongside it. Clicking again
+  // restarts both, rather than being swallowed by the class already being set.
+  clearTimeout(crankTimer)
+  btn.classList.remove('cranking')
+  void btn.offsetWidth
+  btn.classList.add('cranking')
+  crankTimer = setTimeout(() => btn.classList.remove('cranking'), SNORE_MS)
+  playSnore()
   window.meter.refresh()
 })
 el('btn-lock').addEventListener('click', () => window.meter.lock())
 el('btn-close').addEventListener('click', () => window.meter.close())
+el('lock-close').addEventListener('click', () => window.meter.close())
 nodes.btnCloseMini.addEventListener('click', () => window.meter.close())
 
 // Collapsing is reversible from a visible control, not only from the
 // double-click shortcut — a hidden gesture is not a way out of a UI state.
 function setCollapsed (collapsed) {
+  // the pill has no room for the panel, so collapsing closes it rather than
+  // parking it out of sight to reappear on the next expand
+  if (collapsed) closeSettings()
   document.body.classList.toggle('mini', collapsed)
   window.meter.setMini(collapsed)
 }
@@ -1145,9 +1668,6 @@ function runIgnitionSweep () {
     else for (const key of DIAL_KEYS) setNeedle(key, 0)
   }, IGNITION_HOLD_MS)
 }
-
-// On a launch that is already unlocked, still run the self-test once.
-setTimeout(() => { if (!nodes.lock.hasAttribute('hidden')) return; runIgnitionSweep() }, 150)
 
 window.meter.onUpdate(render)
 window.meter.ready()

@@ -1,11 +1,7 @@
 'use strict'
 const fs = require('fs')
-const os = require('os')
-const path = require('path')
 
 const { claudeCredentials } = require('./paths')
-
-const CRED_PATH = claudeCredentials()
 
 // The exact schema of .credentials.json is not contractual and has changed
 // across Claude Code versions. Rather than hard-coding a key path, walk the
@@ -78,9 +74,11 @@ function readKeychain () {
 }
 
 function readCredentials () {
+  // Resolved per call: signing in after this app started is exactly the case
+  // paths.js resolves for, and a module-level constant would freeze the miss.
   let raw
   try {
-    raw = fs.readFileSync(CRED_PATH, 'utf8')
+    raw = fs.readFileSync(claudeCredentials(), 'utf8')
   } catch (err) {
     if (err.code === 'ENOENT') {
       raw = readKeychain()
@@ -102,6 +100,6 @@ function readCredentials () {
   return { token: found.token, expiresAt: found.expiresAt }
 }
 
-function credentialsPath () { return CRED_PATH }
+function credentialsPath () { return claudeCredentials() }
 
 module.exports = { readCredentials, credentialsPath }

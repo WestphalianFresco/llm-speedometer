@@ -1,5 +1,5 @@
 'use strict'
-const { app, BrowserWindow, ipcMain, screen, shell } = require('electron')
+const { app, BrowserWindow, ipcMain, screen, shell, nativeTheme } = require('electron')
 const fs = require('fs')
 const path = require('path')
 const { UsageStore } = require('./store')
@@ -8,7 +8,9 @@ const { detectVendors } = require('./providers/vendors')
 const { CodexStore } = require('./providers/codex')
 
 const NORMAL_SIZE = { width: 470, height: 396 }
-const MINI_SIZE = { width: 232, height: 54 }
+// widened when the collapsed pill started carrying the live rate as well as
+// the tank percentage; at 232 the two readouts wrapped and broke the pill
+const MINI_SIZE = { width: 278, height: 54 }
 const SCREEN_MARGIN = 24
 
 // Local transcripts are cheap to re-read incrementally, so the widget can feel
@@ -20,7 +22,29 @@ let win = null
 let store = null
 let mountedVendor = null
 let ticker = null
-let uiState = { mini: false, x: null, y: null, unlocked: false, vendor: null }
+/**
+ * Preferences the settings panel owns. They live in the same ui.json as the
+ * window state because they are the same kind of thing: how this widget is set
+ * up on this machine, not usage data.
+ *
+ * `theme` is handed to nativeTheme rather than to the stylesheet — the CSS is
+ * already written against prefers-color-scheme, and themeSource drives exactly
+ * that, so an explicit choice needs no second styling path.
+ */
+const DEFAULT_SETTINGS = {
+  theme: 'system',        // system | light | dark
+  opacity: 1,             // 0.55 .. 1
+  alwaysOnTop: true,
+  openAtLogin: false,
+  sound: true,
+  volume: 0.8,            // 0 .. 1
+  showSessions: true
+}
+
+let uiState = {
+  mini: false, x: null, y: null, unlocked: false, vendor: null,
+  settings: { ...DEFAULT_SETTINGS }
+}
 
 const userDataPath = () => app.getPath('userData')
 const statePath = () => path.join(userDataPath(), 'state.json')
@@ -30,6 +54,63 @@ function loadUiState () {
   try {
     uiState = { ...uiState, ...JSON.parse(fs.readFileSync(uiStatePath(), 'utf8')) }
   } catch { /* first run */ }
+  // A settings block saved by an older build is missing whatever has been
+  // added since, so fill the gaps rather than trusting the file's shape.
+  uiState.settings = { ...DEFAULT_SETTINGS, ...(uiState.settings || {}) }
+
+  // Every launch opens on the landing screen. The remembered vendor is kept,
+  // so getting in is one press of the fob rather than a fresh choice — but the
+  // key ceremony is the app's front door and is not skipped.
+  uiState.unlocked = false
+  // ...which also means opening expanded: the landing screen is a full card,
+  // and the collapsed pill has no room to draw it.
+  uiState.mini = false
+}
+
+const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n))
+
+/** Coerce one incoming setting, so a bad value from anywhere cannot stick. */
+function coerceSetting (key, value) {
+  switch (key) {
+    case 'theme':
+      return ['system', 'light', 'dark'].includes(value) ? value : 'system'
+    // Number.isFinite rather than a truthiness test: 0 is a legitimate volume
+    // and a falsy opacity should clamp to the floor, not silently become 1.
+    case 'opacity':
+      return Number.isFinite(Number(value)) ? clamp(Number(value), 0.55, 1) : 1
+    case 'volume':
+      return Number.isFinite(Number(value)) ? clamp(Number(value), 0, 1) : 0
+    case 'alwaysOnTop':
+    case 'openAtLogin':
+    case 'sound':
+    case 'showSessions':
+      return Boolean(value)
+    default:
+      return undefined
+  }
+}
+
+/**
+ * Push every setting out to the thing that actually enforces it. Called on
+ * startup and after each change, so there is one path rather than one rule at
+ * write time and a different one at boot.
+ */
+function applySettings () {
+  const s = uiState.settings
+  nativeTheme.themeSource = s.theme
+
+  if (win && !win.isDestroyed()) {
+    win.setOpacity(s.opacity)
+    win.setAlwaysOnTop(s.alwaysOnTop, 'floating')
+  }
+
+  // Login items are not available in a dev checkout run through electron, and
+  // asking anyway throws on some Windows configurations.
+  if (app.isPackaged) {
+    try {
+      app.setLoginItemSettings({ openAtLogin: s.openAtLogin, path: process.execPath })
+    } catch { /* not fatal — the preference is still recorded */ }
+  }
 }
 
 function saveUiState () {
@@ -37,6 +118,33 @@ function saveUiState () {
     fs.mkdirSync(userDataPath(), { recursive: true })
     fs.writeFileSync(uiStatePath(), JSON.stringify(uiState, null, 2))
   } catch { /* never fail over a cache write */ }
+}
+
+/**
+ * The only path from this app to the operating system's URL handler.
+ *
+ * shell.openExternal hands a string to the OS to dispatch, and the OS will
+ * happily act on schemes that are not web pages at all — file:, and on Windows
+ * anything with a registered protocol handler. Nothing here should ever open
+ * more than a web page, so the scheme is checked against a list rather than
+ * assumed from where the string came from.
+ */
+const OPENABLE_PROTOCOLS = new Set(['https:', 'http:'])
+
+async function openExternal (candidate) {
+  let url
+  try {
+    url = new URL(String(candidate))
+  } catch {
+    return { ok: false, reason: 'bad_url' }
+  }
+  if (!OPENABLE_PROTOCOLS.has(url.protocol)) return { ok: false, reason: 'blocked_scheme' }
+  try {
+    await shell.openExternal(url.href)
+    return { ok: true, url: url.href }
+  } catch {
+    return { ok: false, reason: 'open_failed', url: url.href }
+  }
 }
 
 function defaultPosition (size) {
@@ -80,12 +188,22 @@ function createWindow () {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true
+      nodeIntegrationInSubFrames: false,
+      sandbox: true,
+      // Stated rather than left to the defaults: these are the switches an
+      // audit looks for, and a default that changes upstream should not be
+      // able to quietly widen what this window can do.
+      webviewTag: false,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      experimentalFeatures: false,
+      spellcheck: false
     }
   })
 
   // Float above normal windows without stealing focus from the editor.
-  win.setAlwaysOnTop(true, 'floating')
+  win.setAlwaysOnTop(uiState.settings.alwaysOnTop, 'floating')
+  win.setOpacity(uiState.settings.opacity)
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false })
 
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'))
@@ -110,10 +228,13 @@ function createWindow () {
 
   // Nothing in this widget should ever navigate or spawn a window.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    openExternal(url)
     return { action: 'deny' }
   })
   win.webContents.on('will-navigate', event => event.preventDefault())
+  // The renderer is one local file with no frames; anything trying to attach
+  // one is not this app behaving normally.
+  win.webContents.on('will-attach-webview', event => event.preventDefault())
 
   // Renderer errors are invisible from the terminal otherwise.
   win.webContents.on('console-message', (_e, level, message, line, source) => {
@@ -149,7 +270,11 @@ function push () {
     appVersion: app.getVersion(),
     unlocked: Boolean(uiState.unlocked),
     vendor: uiState.vendor,
-    mini: Boolean(uiState.mini)
+    mini: Boolean(uiState.mini),
+    settings: { ...uiState.settings },
+    // the panel reports what the OS is actually doing under 'system'
+    darkMode: nativeTheme.shouldUseDarkColors,
+    canOpenAtLogin: app.isPackaged
   })
 }
 
@@ -170,11 +295,30 @@ function startTicker () {
 
 // ---------- IPC ----------
 
-ipcMain.on('ui:ready', () => { tick().catch(() => {}) })
+/**
+ * Every channel below mutates something real — another program's config, the
+ * window, the saved preferences — so each one first checks that the message
+ * came from this app's own renderer rather than from whatever else happens to
+ * be able to reach the main process. There is exactly one legitimate sender.
+ */
+const fromRenderer = event =>
+  Boolean(win) && !win.isDestroyed() && event.sender === win.webContents
+
+const onUi = (channel, handler) => ipcMain.on(channel, (event, ...args) => {
+  if (!fromRenderer(event)) return
+  handler(...args)
+})
+
+const handleUi = (channel, handler) => ipcMain.handle(channel, (event, ...args) => {
+  if (!fromRenderer(event)) return { ok: false, reason: 'unknown_sender' }
+  return handler(...args)
+})
+
+onUi('ui:ready', () => { tick().catch(() => {}) })
 
 // Writing another program's config is a real mutation, so it answers with a
 // result the UI can surface rather than failing silently.
-ipcMain.handle('ui:model', (_event, value) => {
+handleUi('ui:model', value => {
   const result = writeModel(value)
   if (result.ok) push()
   return result
@@ -183,7 +327,7 @@ ipcMain.handle('ui:model', (_event, value) => {
 // Unlocking only records which provider the dashboard is pointed at. There is
 // no credential exchange here — a provider is "unlocked" when its CLI is
 // already signed in on this machine, which vendors.js reads, nothing more.
-ipcMain.handle('ui:unlock', (_event, vendorId) => {
+handleUi('ui:unlock', vendorId => {
   const vendor = detectVendors().find(v => v.id === vendorId)
   if (!vendor) return { ok: false, reason: 'unknown_vendor' }
   if (!vendor.usable) return { ok: false, reason: 'not_usable', vendor }
@@ -195,7 +339,27 @@ ipcMain.handle('ui:unlock', (_event, vendorId) => {
   return { ok: true, vendor }
 })
 
-ipcMain.on('ui:lock', () => {
+// One setting at a time, answered with the whole block so the renderer never
+// has to guess what was accepted.
+handleUi('ui:setting', (key, value) => {
+  const coerced = coerceSetting(key, value)
+  if (coerced === undefined) return { ok: false, reason: 'unknown_setting' }
+  uiState.settings[key] = coerced
+  saveUiState()
+  applySettings()
+  push()
+  return { ok: true, settings: { ...uiState.settings } }
+})
+
+handleUi('ui:settings-reset', () => {
+  uiState.settings = { ...DEFAULT_SETTINGS }
+  saveUiState()
+  applySettings()
+  push()
+  return { ok: true, settings: { ...uiState.settings } }
+})
+
+onUi('ui:lock', () => {
   uiState.unlocked = false
   saveUiState()
   push()
@@ -203,20 +367,15 @@ ipcMain.on('ui:lock', () => {
 
 // Hands off to the provider's real site in the user's own browser rather than
 // rendering any sign-in form inside this app.
-ipcMain.handle('ui:open-vendor', async (_event, vendorId) => {
+handleUi('ui:open-vendor', async vendorId => {
   const vendor = detectVendors().find(v => v.id === vendorId)
   if (!vendor) return { ok: false, reason: 'unknown_vendor' }
-  try {
-    await shell.openExternal(vendor.url)
-    return { ok: true, url: vendor.url }
-  } catch {
-    return { ok: false, reason: 'open_failed', url: vendor.url }
-  }
+  return openExternal(vendor.url)
 })
 
 // A manual refresh may skip the comfortable interval but still cannot dip
 // under the provider's hard floor, so impatient clicking cannot dig a 429 hole.
-ipcMain.on('ui:refresh', () => {
+onUi('ui:refresh', () => {
   ;(async () => {
     store.refreshLocal()
     await store.pollOfficial({ force: true })
@@ -224,9 +383,9 @@ ipcMain.on('ui:refresh', () => {
   })().catch(() => {})
 })
 
-ipcMain.on('ui:close', () => app.quit())
+onUi('ui:close', () => app.quit())
 
-ipcMain.on('ui:mini', (_event, mini) => {
+onUi('ui:mini', mini => {
   if (!win || win.isDestroyed()) return
   uiState.mini = mini
   const size = mini ? MINI_SIZE : NORMAL_SIZE
@@ -246,9 +405,14 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(() => {
     loadUiState()
-    // an unlocked session resumes on its own vendor; otherwise default to Claude
-    mountStore(uiState.unlocked && uiState.vendor ? uiState.vendor : 'anthropic')
+    // Mount the remembered vendor even though the app opens locked, so the
+    // first reading is already warm when the fob is pressed.
+    mountStore(uiState.vendor || 'anthropic')
+    // theme before the window exists, so it opens in the right palette rather
+    // than flashing the system one and correcting itself
+    nativeTheme.themeSource = uiState.settings.theme
     createWindow()
+    applySettings()
     startTicker()
 
     app.on('activate', () => {

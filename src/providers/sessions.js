@@ -1,6 +1,5 @@
 'use strict'
 const fs = require('fs')
-const os = require('os')
 const path = require('path')
 
 const { claudeProjects, claudeSessions } = require('./paths')
@@ -65,8 +64,10 @@ function modelOf (file) {
     const length = stat.size - start
     if (length > 0) {
       const buffer = Buffer.allocUnsafe(length)
-      fs.readSync(fd, buffer, 0, length, start)
-      text = buffer.toString('utf8')
+      // decode only what was actually read; the tail of an uninitialised
+      // buffer is heap memory, not transcript
+      const read = fs.readSync(fd, buffer, 0, length, start)
+      text = read > 0 ? buffer.toString('utf8', 0, read) : ''
     }
   } catch {
     return null
@@ -103,6 +104,10 @@ function listSessions () {
   }
 
   const index = transcriptIndex()
+  // Transcripts get deleted and projects get archived; without this the cache
+  // keeps an entry for every file this process has ever seen.
+  const live = new Set(index.values())
+  for (const key of modelCache.keys()) if (!live.has(key)) modelCache.delete(key)
   const out = []
 
   for (const name of names) {
