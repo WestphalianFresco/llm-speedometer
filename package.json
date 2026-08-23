@@ -1,7 +1,10 @@
 {
-  "name": "claude-meter",
+  "name": "llm-speedometer",
   "version": "0.1.0",
-  "description": "A cute always-on-top desktop widget showing Claude usage quota as progress bars",
+  "description": "Desktop gauge cluster for LLM usage",
+  "productName": "LLM Speedometer",
+  "author": "William Fan",
+  "license": "MIT",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
@@ -14,22 +17,38 @@
     "electron-builder": "^25.1.8"
   },
   "build": {
-    "appId": "dev.local.claude-meter",
-    "productName": "ClaudeSpeedometer",
+    "appId": "dev.williamfan.llmspeedometer",
+    "productName": "LLM Speedometer",
     "files": [
       "src/**/*",
       "package.json"
     ],
     "win": {
-      "target": "portable"
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "artifactName": "${productName}-${version}-Setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-Portable.${ext}"
     },
     "mac": {
       "target": "dmg",
-      "category": "public.app-category.developer-tools"
+      "category": "public.app-category.developer-tools",
+      "artifactName": "${productName}-${version}.${ext}"
     },
     "linux": {
-      "target": "AppImage"
+      "target": "AppImage",
+      "category": "Development",
+      "artifactName": "${productName}-${version}.${ext}"
     }
-  },
-  "productName": "Claude Speedometer"
+  }
 }

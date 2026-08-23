@@ -110,6 +110,17 @@ html, body {
 .lock[hidden] { display: none; }
 @keyframes lock-in { from { opacity: 0; } to { opacity: 1; } }
 
+/* Leaving was an instant setAttribute('hidden') — the panel simply blinked out
+   from under you. It now pulls back and dissolves, revealing the cluster. */
+.lock.opening {
+  animation: lock-out 460ms cubic-bezier(.45, 0, .55, 1) forwards;
+  pointer-events: none;
+}
+@keyframes lock-out {
+  0%   { opacity: 1; transform: scale(1)     translateY(0); filter: blur(0); }
+  100% { opacity: 0; transform: scale(1.075) translateY(-6px); filter: blur(3px); }
+}
+
 /* the fob body */
 .fob {
   -webkit-app-region: no-drag;
@@ -163,12 +174,21 @@ html, body {
 .padlock .keyhole,
 .padlock .keyslot  { fill: #17140f; }
 
-/* unlocked: shackle swings up and out, everything goes green */
+/* unlocked: the shackle lifts clear of the body before it swings, which is
+   what the eye expects; a pure rotation just looked like a wobble */
 .fob.open .padlock .shackle {
-  transform: rotate(-36deg) translateY(-1.5px);
+  transform: translateY(-3.5px) rotate(-42deg);
   stroke: var(--safe);
 }
 .fob.open .padlock .lockbody { fill: var(--safe); }
+
+/* the fob itself gives a short recoil as it pops */
+.fob.open { animation: fob-pop 420ms cubic-bezier(.28, .9, .35, 1.3); }
+@keyframes fob-pop {
+  0%   { transform: scale(1); }
+  35%  { transform: scale(1.055); }
+  100% { transform: scale(1); }
+}
 
 /* refused: the fob shakes its head */
 .fob.deny { animation: fob-shake 420ms ease-in-out; }
@@ -502,6 +522,18 @@ html, body {
 .ctl:hover       { background: var(--edge); color: var(--ink); transform: scale(1.12); }
 .ctl:active      { transform: scale(.92); }
 .ctl-close:hover { background: var(--crit); color: #fff; }
+
+/* wider than the icon buttons because it carries a word */
+.ctl-rev {
+  width: auto;
+  padding: 0 6px;
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-bold);
+  letter-spacing: .8px;
+  color: var(--accent);
+}
+.ctl-rev:hover  { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
+.ctl-rev:active { transform: scale(.9); }
 .ctl.spinning    { animation: spin 620ms linear; }
 @keyframes spin  { to { transform: rotate(360deg); } }
 

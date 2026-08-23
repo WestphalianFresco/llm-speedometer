@@ -365,7 +365,10 @@ function frame (now) {
     }
 
     if (cluster[key] && cluster[key].needle) {
-      applyNeedle(key, Math.min(DIALS[key].max, Math.max(0, shown)))
+      const value = Math.min(DIALS[key].max, Math.max(0, shown))
+      applyNeedle(key, value)
+      // during a blip the digits follow the needle, so the two never disagree
+      if (revActive && key === 'tach') cluster.tach.readout.textContent = formatRate(value)
     }
   }
 
@@ -827,26 +830,44 @@ nodes.fobUnlock.addEventListener('click', async () => {
     return
   }
 
+  // Claim the animation BEFORE awaiting. The main process pushes a fresh
+  // payload from inside its unlock handler, and that payload lands here the
+  // moment the await resolves -- if the flag were still false, renderLock
+  // would tear the overlay away before the shackle had moved at all.
+  unlockAnimating = true
+
   const result = await window.meter.unlock(selectedVendor.id)
   if (!result || !result.ok) {
+    unlockAnimating = false
     blinkLed()
     denyFob()
     nodes.lockStatus.textContent = (result && result.reason) || 'Unlock failed.'
     return
   }
 
-  unlockAnimating = true
   // lamp goes green and stays green; the blink just marks the moment
   setFobOpen(true)
   blinkLed()
   nodes.lockStatus.textContent = 'Unlocked. Starting up\u2026'
 
-  // hold long enough for the shackle to swing before handing over to the dash
+  // Three beats rather than one hard cut: the shackle pops, it is allowed to
+  // sit open long enough to actually be read, then the panel dissolves away
+  // and the cluster sweeps up behind it.
+  const POP_MS = 620      // shackle swings and settles
+  const DISSOLVE_MS = 460 // must match the lock-out keyframe
+
+  setTimeout(() => {
+    nodes.lock.classList.add('opening')
+    // the sweep starts under the dissolve, so the needles are already moving
+    // by the time the panel clears
+    runIgnitionSweep()
+  }, POP_MS)
+
   setTimeout(() => {
     nodes.lock.setAttribute('hidden', '')
+    nodes.lock.classList.remove('opening')
     unlockAnimating = false
-    runIgnitionSweep()
-  }, 780)
+  }, POP_MS + DISSOLVE_MS)
 })
 
 nodes.lockOpen.addEventListener('click', async () => {
@@ -876,8 +897,11 @@ function renderLock (data) {
 
   const locked = !data.unlocked
   nodes.lock.toggleAttribute('hidden', !locked)
-  // Re-locking from the header must put the shackle back down.
-  if (locked) setFobOpen(false)
+  if (locked) {
+    // clear the exit animation, or the panel returns already faded out
+    nodes.lock.classList.remove('opening')
+    setFobOpen(false)
+  }
 }
 
 /**
@@ -970,6 +994,100 @@ function tickCountdown () {
 // ticks every second now that the countdown is second-accurate
 setInterval(tickCountdown, 1000)
 
+/* ---------- throttle blip ----------
+ *
+ * Purely cosmetic: it sweeps the needle and makes a noise, and changes no
+ * reading. The live value is restored the moment it settles.
+ *
+ * The sound is synthesised rather than shipped as an asset — two detuned
+ * sawtooths for the engine body, filtered noise for induction roar, and a
+ * lowpass that opens with the revs. No file, no network, and nothing for the
+ * page's content policy to block.
+ */
+let audioCtx = null
+let revActive = false
+
+function getAudio () {
+  if (!audioCtx) {
+    const Ctor = window.AudioContext || window.webkitAudioContext
+    if (!Ctor) return null
+    audioCtx = new Ctor()
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume()
+  return audioCtx
+}
+
+function playRev () {
+  const ctx = getAudio()
+  if (!ctx) return
+  const t0 = ctx.currentTime
+  const peak = t0 + 0.34
+  const hold = t0 + 0.62
+  const end = t0 + 1.25
+
+  const out = ctx.createGain()
+  out.gain.setValueAtTime(0.0001, t0)
+  out.gain.exponentialRampToValueAtTime(0.20, t0 + 0.07)
+  out.gain.setValueAtTime(0.20, hold)
+  out.gain.exponentialRampToValueAtTime(0.0001, end)
+  out.connect(ctx.destination)
+
+  const tone = ctx.createBiquadFilter()
+  tone.type = 'lowpass'
+  tone.Q.value = 6
+  tone.frequency.setValueAtTime(380, t0)
+  tone.frequency.exponentialRampToValueAtTime(3600, peak)
+  tone.frequency.setValueAtTime(3600, hold)
+  tone.frequency.exponentialRampToValueAtTime(520, end)
+  tone.connect(out)
+
+  // engine body: two saws a few cents apart beat against each other
+  for (const detune of [0, 7]) {
+    const osc = ctx.createOscillator()
+    osc.type = 'sawtooth'
+    osc.detune.value = detune
+    osc.frequency.setValueAtTime(72, t0)
+    osc.frequency.exponentialRampToValueAtTime(330, peak)
+    osc.frequency.setValueAtTime(330, hold)
+    osc.frequency.exponentialRampToValueAtTime(88, end)
+    osc.connect(tone)
+    osc.start(t0)
+    osc.stop(end + 0.05)
+  }
+
+  // induction roar
+  const frames = Math.floor(ctx.sampleRate * 1.3)
+  const buffer = ctx.createBuffer(1, frames, ctx.sampleRate)
+  const data = buffer.getChannelData(0)
+  for (let i = 0; i < frames; i++) data[i] = Math.random() * 2 - 1
+  const noise = ctx.createBufferSource()
+  noise.buffer = buffer
+  const band = ctx.createBiquadFilter()
+  band.type = 'bandpass'
+  band.Q.value = 1.1
+  band.frequency.setValueAtTime(500, t0)
+  band.frequency.exponentialRampToValueAtTime(2200, peak)
+  band.frequency.exponentialRampToValueAtTime(600, end)
+  const noiseGain = ctx.createGain()
+  noiseGain.gain.setValueAtTime(0.0001, t0)
+  noiseGain.gain.exponentialRampToValueAtTime(0.075, peak)
+  noiseGain.gain.exponentialRampToValueAtTime(0.0001, end)
+  noise.connect(band); band.connect(noiseGain); noiseGain.connect(ctx.destination)
+  noise.start(t0)
+  noise.stop(end + 0.05)
+}
+
+function revEngine () {
+  playRev()
+  revActive = true
+  setNeedle('tach', DIALS.tach.max)
+  setTimeout(() => { setNeedle('tach', DIALS.tach.max * 0.18) }, 620)
+  setTimeout(() => {
+    revActive = false
+    if (latest) render(latest)
+  }, 1250)
+}
+
 // ---------- wiring ----------
 
 nodes.mascot.addEventListener('click', () => {
@@ -983,6 +1101,7 @@ nodes.mascot.addEventListener('animationend', e => {
   if (e.animationName === 'boing') nodes.mascot.classList.remove('boing')
 })
 
+el('btn-rev').addEventListener('click', revEngine)
 el('btn-refresh').addEventListener('click', e => {
   const btn = e.currentTarget
   btn.classList.add('spinning')
