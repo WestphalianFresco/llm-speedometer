@@ -5,6 +5,7 @@ const path = require('path')
 const { UsageStore } = require('./store')
 const { writeModel } = require('./providers/settings')
 const { detectVendors } = require('./providers/vendors')
+const { PROVIDERS, findGear, findProvider } = require('./providers/catalog')
 const { CodexStore } = require('./providers/codex')
 
 const NORMAL_SIZE = { width: 470, height: 396 }
@@ -41,9 +42,14 @@ const DEFAULT_SETTINGS = {
   showSessions: true
 }
 
+// What the shifter is currently in, and what it was in before — Reverse drops
+// back to `previous`, which is the only thing that field is for.
+const DEFAULT_GEARBOX = { providerId: 'anthropic', gear: null, previous: null }
+
 let uiState = {
   mini: false, x: null, y: null, unlocked: false, vendor: null,
-  settings: { ...DEFAULT_SETTINGS }
+  settings: { ...DEFAULT_SETTINGS },
+  gearbox: { ...DEFAULT_GEARBOX }
 }
 
 const userDataPath = () => app.getPath('userData')
@@ -57,6 +63,7 @@ function loadUiState () {
   // A settings block saved by an older build is missing whatever has been
   // added since, so fill the gaps rather than trusting the file's shape.
   uiState.settings = { ...DEFAULT_SETTINGS, ...(uiState.settings || {}) }
+  uiState.gearbox = coerceGearbox(uiState.gearbox)
 
   // Every launch opens on the landing screen. The remembered vendor is kept,
   // so getting in is one press of the fob rather than a fresh choice — but the
@@ -68,6 +75,29 @@ function loadUiState () {
 }
 
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n))
+
+/**
+ * ui.json is ours, but it is a file on disk that anything running as this user
+ * could have edited. Every field is re-checked against the catalogue on the way
+ * in, so a hand-edited or corrupted file cannot put the shifter into a gear
+ * that does not exist.
+ */
+function coerceGearbox (saved) {
+  const raw = saved && typeof saved === 'object' ? saved : {}
+  const known = findGear(String(raw.providerId), Number(raw.gear))
+  const previous = raw.previous && typeof raw.previous === 'object'
+    ? findGear(String(raw.previous.providerId), Number(raw.previous.gear))
+    : null
+  return {
+    providerId: known ? known.provider.id : (findProvider(String(raw.providerId))
+      ? String(raw.providerId)
+      : DEFAULT_GEARBOX.providerId),
+    gear: known ? known.gear.gear : null,
+    previous: previous
+      ? { providerId: previous.provider.id, gear: previous.gear.gear }
+      : null
+  }
+}
 
 /** Coerce one incoming setting, so a bad value from anywhere cannot stick. */
 function coerceSetting (key, value) {
@@ -272,6 +302,10 @@ function push () {
     vendor: uiState.vendor,
     mini: Boolean(uiState.mini),
     settings: { ...uiState.settings },
+    gearbox: { ...uiState.gearbox },
+    // The catalogue travels with the payload so the renderer draws gears from
+    // the same list main validates against — it never invents a model value.
+    catalog: PROVIDERS,
     // the panel reports what the OS is actually doing under 'system'
     darkMode: nativeTheme.shouldUseDarkColors,
     canOpenAtLogin: app.isPackaged
@@ -358,6 +392,62 @@ handleUi('ui:settings-reset', () => {
   push()
   return { ok: true, settings: { ...uiState.settings } }
 })
+
+/**
+ * Engage a gear.
+ *
+ * The renderer sends a provider id and a gear number, nothing more — never a
+ * model string. Both are resolved against the catalogue here, and the only
+ * value that can reach writeModel() is the `apply` field the catalogue itself
+ * carries, which is checked against writeModel's whitelist at load. A gear on a
+ * provider this app cannot configure is recorded and reported as such rather
+ * than being silently dropped.
+ */
+handleUi('ui:gear', (providerId, gear) => {
+  // Reverse is a control, not a model: it re-engages the previous gear.
+  if (gear === 'R') {
+    const back = uiState.gearbox.previous
+    if (!back) return { ok: false, reason: 'nothing_to_reverse_to' }
+    return engageGear(back.providerId, back.gear)
+  }
+  return engageGear(providerId, gear)
+})
+
+function engageGear (providerId, gear) {
+  const found = findGear(String(providerId), Number(gear))
+  if (!found) return { ok: false, reason: 'unknown_gear' }
+
+  const applied = { providerId: found.provider.id, gear: found.gear.gear }
+  let write = null
+
+  if (found.provider.configurable && found.gear.apply) {
+    write = writeModel(found.gear.apply)
+    // A refused write must not leave the shifter claiming a gear it never got
+    // into, so the state only advances once the file actually changed.
+    if (!write.ok) return { ok: false, reason: write.reason, gear: applied }
+  }
+
+  const current = uiState.gearbox
+  const changed = current.providerId !== applied.providerId || current.gear !== applied.gear
+  uiState.gearbox = {
+    providerId: applied.providerId,
+    gear: applied.gear,
+    previous: changed && current.gear !== null
+      ? { providerId: current.providerId, gear: current.gear }
+      : current.previous
+  }
+  saveUiState()
+  push()
+
+  return {
+    ok: true,
+    gearbox: { ...uiState.gearbox },
+    // false means "recorded, but nothing on disk changed" — the UI says so
+    // rather than implying the CLI was retargeted.
+    applied: Boolean(write && write.ok),
+    label: found.gear.label
+  }
+}
 
 onUi('ui:lock', () => {
   uiState.unlocked = false

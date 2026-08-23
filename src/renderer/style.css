@@ -534,6 +534,10 @@ html, body {
 
 .controls { -webkit-app-region: no-drag; display: flex; gap: 2px; flex: none; }
 
+/* a control whose face is an svg rather than a glyph */
+.ctl-svg  { display: flex; align-items: center; justify-content: center; }
+.ctl-icon { width: 13px; height: 13px; display: block; }
+
 .ctl {
   -webkit-app-region: no-drag;
   width: 19px; height: 19px;
@@ -574,6 +578,205 @@ body.no-sessions .odo { flex: 1 1 auto; }
 
 /* the collapsed pill has no room for a settings overlay */
 body.mini .settings { display: none; }
+
+/* ---------- gearbox ---------- */
+
+.gearbox {
+  position: absolute;
+  inset: 0;
+  z-index: 46;
+  border-radius: 20px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  animation: lock-in 160ms ease-out;
+  -webkit-app-region: no-drag;
+}
+.gearbox[hidden] { display: none; }
+
+/* the make selector: one chip per provider, its mark in the provider's accent */
+.gb-makes {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 8px 13px 7px;
+  border-bottom: 1px solid var(--edge);
+  scrollbar-width: none;
+}
+.gb-makes::-webkit-scrollbar { display: none; }
+/* the rail scrolls past the edge — fade the last chip out so that reads as
+   "more this way" rather than as a clipped layout */
+.gb-makes {
+  -webkit-mask-image: linear-gradient(90deg, #000 0, #000 88%, transparent 100%);
+  mask-image: linear-gradient(90deg, #000 0, #000 88%, transparent 100%);
+}
+
+.gb-make {
+  flex: none;
+  display: flex; align-items: center; gap: 5px;
+  padding: 4px 8px 4px 5px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--edge);
+  color: var(--muted);
+  font-family: var(--font);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  transition: color 120ms, border-color 120ms, background 120ms;
+}
+.gb-make:hover { color: var(--ink); }
+.gb-make.on {
+  color: var(--ink);
+  border-color: color-mix(in srgb, var(--make) 60%, transparent);
+  background: color-mix(in srgb, var(--make) 16%, transparent);
+}
+.gb-make svg { width: 13px; height: 13px; color: var(--make); flex: none; }
+
+/* the footwell: pedal on the left, gate on the right, as in a car */
+.gb-floor {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 13px 2px;
+  min-height: 0;
+}
+
+.gb-pedal-well {
+  flex: none;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  width: 88px;
+}
+
+.gb-pedal {
+  width: 80px; height: 146px;
+  padding: 0; border: 0; background: none;
+  cursor: pointer;
+  touch-action: none;
+}
+.gb-pedal svg { width: 100%; height: 100%; overflow: visible; }
+
+/* The pedal swings on its pivot rather than sliding: it is hinged at the floor,
+   so the pad arcs away from you and shrinks slightly as it goes. */
+/* Everything above the hinge swings together, about the hinge, so the pad
+   arcs away from you rather than sliding down the screen. */
+.gb-pedal .gb-pad,
+.gb-pedal .gb-pad-face,
+.gb-pedal .gb-tread,
+.gb-pedal .gb-arm,
+.gb-pedal .gb-arm-hi {
+  transform-box: view-box;
+  transform-origin: 40px 126px;
+  transition: transform 170ms cubic-bezier(.3, .7, .35, 1);
+}
+.gb-pedal .gb-floorplate      { fill: #201C16; stroke: #3B362D; stroke-width: 1; }
+.gb-pedal .gb-floorplate-line { stroke: #3B362D; }
+.gb-pedal .gb-pad       { fill: #14120E; }
+.gb-pedal .gb-pad-face  { fill: #3A342A; stroke: #16130E; stroke-width: 1; }
+.gb-pedal .gb-tread     { stroke: #746C5C; fill: none; }
+.gb-pedal .gb-arm       { stroke: #46402F; }
+.gb-pedal .gb-arm-hi    { stroke: #6B6350; }
+.gb-pedal .gb-pivot     { fill: #16130E; stroke: #4A4438; stroke-width: 1.5; }
+
+.gb-pedal:hover .gb-pad-face { fill: #453E32; }
+
+/* Depressed: swung away from the viewer. The vertical squash is the pad
+   foreshortening as it rotates past you. */
+.gb-pedal.down .gb-pad,
+.gb-pedal.down .gb-pad-face,
+.gb-pedal.down .gb-tread,
+.gb-pedal.down .gb-arm,
+.gb-pedal.down .gb-arm-hi {
+  transform: rotate(-13deg) translateY(16px) scaleY(.82);
+}
+.gb-pedal.down .gb-pad-face { fill: #2B2620; }
+
+.gb-pedal-label {
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--ls-caps);
+  color: var(--faint);
+  transition: color 160ms;
+}
+.gb-pedal.down + .gb-pedal-label { color: var(--accent); }
+
+.gb-gate-well { flex: 1 1 auto; min-width: 0; display: flex; justify-content: center; }
+.gb-gate { width: 100%; max-width: 250px; height: auto; }
+
+/* the gate plate the lever runs in */
+.gb-slot      { fill: none; stroke: #14120E; stroke-linecap: round; stroke-linejoin: round; }
+.gb-slot-lip  { fill: none; stroke: var(--face-edge); stroke-linecap: round; stroke-linejoin: round; }
+.gb-detent    { fill: none; stroke: var(--tick); stroke-width: 1; opacity: .5; }
+.gb-gear-num  {
+  fill: var(--mark-lit);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-bold);
+  text-anchor: middle;
+}
+.gb-gear-name {
+  fill: var(--muted);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-medium);
+  text-anchor: middle;
+}
+.gb-gear.on .gb-gear-num  { fill: var(--accent); }
+.gb-gear.on .gb-gear-name { fill: var(--ink); }
+
+/* the lever: a knob on a shaft, with a shadow that stays on the plate */
+.gb-shaft { stroke: #8A8172; stroke-width: 5; stroke-linecap: round; }
+.gb-knob-shadow { fill: rgba(0,0,0,.45); }
+.gb-knob {
+  fill: url(#gb-knob-fill);
+  stroke: #14120E;
+  stroke-width: 1.2;
+}
+.gb-knob-cap { fill: none; stroke: rgba(255,255,255,.34); stroke-width: 1.2; }
+
+/* while the clutch is down the lever is free, and says so */
+.gb-lever.free .gb-knob { stroke: var(--accent); }
+/* forcing it without the clutch: it fights back */
+.gb-lever.grind { animation: gb-grind 240ms ease-in-out; }
+@keyframes gb-grind {
+  0%, 100% { transform: translateX(0); }
+  25%      { transform: translateX(-2.5px); }
+  60%      { transform: translateX(2.5px); }
+}
+
+.gb-readout {
+  flex: none;
+  display: flex; align-items: center; gap: 7px;
+  padding: 2px 13px 0;
+}
+.gb-lamp {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--dim);
+  flex: none;
+  transition: background 200ms, box-shadow 200ms;
+}
+.gb-lamp.engaged {
+  background: var(--safe);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--safe) 80%, transparent);
+}
+.gb-lamp.slipping {
+  background: var(--warm);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--warm) 80%, transparent);
+}
+.gb-status {
+  font-size: var(--fs-xs);
+  color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.gb-note {
+  flex: none;
+  padding: 2px 13px 10px;
+  font-size: var(--fs-micro);
+  line-height: 1.45;
+  color: var(--faint);
+  min-height: 22px;
+}
+
+body.mini .gearbox { display: none; }
 
 /* ---------- settings ---------- */
 

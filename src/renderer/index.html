@@ -173,6 +173,58 @@
       </div>
     </div>
 
+    <!-- Gearbox. A clutch and an H-pattern shifter: the lever will not leave a
+         gate until the clutch is down, and the model only changes at the bite
+         point on the way back up. -->
+    <div class="gearbox" id="gearbox" hidden>
+      <div class="set-head">
+        <span class="set-title">GEARBOX</span>
+        <button class="ctl" id="gb-close" title="Back">&#10005;</button>
+      </div>
+
+      <div class="gb-makes" id="gb-makes"></div>
+
+      <div class="gb-floor">
+        <!-- clutch pedal -->
+        <div class="gb-pedal-well">
+          <button class="gb-pedal" id="gb-pedal" aria-pressed="false"
+                  title="Hold to depress the clutch (or hold Space)">
+            <svg viewBox="0 0 80 150" aria-hidden="true">
+              <!-- floor plate and the hinge the pedal swings on -->
+              <rect class="gb-floorplate" x="6" y="126" width="68" height="14" rx="3"/>
+              <path class="gb-floorplate-line" d="M14 133 H66" stroke-width="1.5"
+                    stroke-linecap="round" fill="none"/>
+              <!-- the arm, hinged at the floor -->
+              <path class="gb-arm" d="M40 34 V124" stroke-width="9"
+                    stroke-linecap="round" fill="none"/>
+              <path class="gb-arm-hi" d="M37 40 V118" stroke-width="2"
+                    stroke-linecap="round" fill="none"/>
+              <!-- the rubber pad, seen at a slight angle -->
+              <rect class="gb-pad" x="12" y="8" width="56" height="40" rx="7"/>
+              <rect class="gb-pad-face" x="16" y="12" width="48" height="32" rx="5"/>
+              <g class="gb-tread">
+                <path d="M22 19 H58 M22 25 H58 M22 31 H58 M22 37 H58"
+                      stroke-width="2.4" stroke-linecap="round"/>
+              </g>
+              <ellipse class="gb-pivot" cx="40" cy="126" rx="8" ry="6"/>
+            </svg>
+          </button>
+          <span class="gb-pedal-label">CLUTCH</span>
+        </div>
+
+        <!-- the gate -->
+        <div class="gb-gate-well">
+          <svg class="gb-gate" id="gb-gate" viewBox="0 0 260 200" aria-hidden="true"></svg>
+        </div>
+      </div>
+
+      <div class="gb-readout">
+        <span class="gb-lamp" id="gb-lamp"></span>
+        <span class="gb-status" id="gb-status">Hold the clutch to shift.</span>
+      </div>
+      <p class="gb-note" id="gb-note"></p>
+    </div>
+
     <div class="header">
       <div class="hdr-top">
         <div class="brand">
@@ -181,6 +233,14 @@
           <span class="brand-by">By William Fan</span>
         </div>
         <div class="controls">
+          <button class="ctl ctl-svg" id="btn-gearbox" title="Gearbox — change model">
+            <svg viewBox="0 0 16 16" aria-hidden="true" class="ctl-icon">
+              <path d="M3 3.6 V8 H13 V3.6 M8 3.6 V8 M3 8 V12.4 M8 8 V12.4 M13 8 V12.4"
+                    fill="none" stroke="currentColor" stroke-width="1.3"
+                    stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="3" cy="3.6" r="1.6" fill="currentColor"/>
+            </svg>
+          </button>
           <button class="ctl" id="btn-settings" title="Settings">&#9881;</button>
           <button class="ctl ctl-rev" id="btn-rev" title="Blip the throttle">REV</button>
           <button class="ctl" id="btn-lock" title="Lock / switch provider">&#128274;</button>

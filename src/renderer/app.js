@@ -593,6 +593,7 @@ function render (data) {
   renderTasks(data)
   renderOdometer(data)
   renderSettings(data)
+  renderGearbox(data)
   syncCollapsed(data)
   renderLock(data)
 
@@ -1277,6 +1278,135 @@ function revVoiceStop () {
 }
 
 /**
+ * Gearbox sounds.
+ *
+ * All four are mechanical rather than musical: a short excitation through a
+ * resonant filter, which is what a struck or scraped piece of metal is. They
+ * route through the same bus as everything else, so the volume slider and the
+ * mute switch reach them without knowing they exist.
+ */
+
+/** A struck-metal hit: noise burst through a bandpass that rings and dies. */
+function metalHit (ctx, at, { freq, q, level, decay, tone = 0 }) {
+  const body = noiseSource(ctx, decay + 0.05)
+  const ring = ctx.createBiquadFilter()
+  ring.type = 'bandpass'
+  ring.frequency.value = freq
+  ring.Q.value = q
+  const gain = ctx.createGain()
+  gain.gain.setValueAtTime(0.0001, at)
+  gain.gain.exponentialRampToValueAtTime(level, at + 0.004)
+  gain.gain.exponentialRampToValueAtTime(0.0001, at + decay)
+  body.connect(ring); ring.connect(gain); gain.connect(audioBus(ctx))
+  body.start(at)
+  body.stop(at + decay + 0.05)
+
+  // an optional pitched thud under the hit, for the heavier sounds
+  if (tone) {
+    const osc = ctx.createOscillator()
+    osc.type = 'sine'
+    osc.frequency.setValueAtTime(tone, at)
+    osc.frequency.exponentialRampToValueAtTime(tone * 0.55, at + decay)
+    const thud = ctx.createGain()
+    thud.gain.setValueAtTime(0.0001, at)
+    thud.gain.exponentialRampToValueAtTime(level * 1.4, at + 0.008)
+    thud.gain.exponentialRampToValueAtTime(0.0001, at + decay)
+    osc.connect(thud); thud.connect(audioBus(ctx))
+    osc.start(at)
+    osc.stop(at + decay + 0.05)
+  }
+}
+
+/** Pedal down is a damped click; letting it up is softer and lower. */
+function playClutch (down) {
+  const ctx = getAudio()
+  if (!ctx) return
+  const t = ctx.currentTime
+  metalHit(ctx, t, down
+    ? { freq: 900, q: 3, level: 0.1, decay: 0.07, tone: 150 }
+    : { freq: 620, q: 2.5, level: 0.06, decay: 0.1, tone: 95 })
+}
+
+/** The lever dropping over a detent: small, bright, very short. */
+function playDetent () {
+  const ctx = getAudio()
+  if (!ctx) return
+  metalHit(ctx, ctx.currentTime, { freq: 2600, q: 9, level: 0.05, decay: 0.035 })
+}
+
+/** Selecting a gear: the solid clunk of dogs meshing. */
+function playEngage () {
+  const ctx = getAudio()
+  if (!ctx) return
+  const t = ctx.currentTime
+  metalHit(ctx, t, { freq: 420, q: 4, level: 0.16, decay: 0.13, tone: 120 })
+  // the second, quieter knock of the linkage taking up its slack
+  metalHit(ctx, t + 0.045, { freq: 1500, q: 7, level: 0.05, decay: 0.06 })
+}
+
+/**
+ * Gear grind: what you get for shifting without the clutch. Two detuned saws
+ * chopped by a fast square LFO — the chop IS the sound, because the teeth are
+ * making and breaking contact many times a second rather than meshing.
+ */
+function playGrind () {
+  const ctx = getAudio()
+  if (!ctx) return
+  const t = ctx.currentTime
+  const end = t + 0.34
+
+  const out = ctx.createGain()
+  out.gain.setValueAtTime(0.0001, t)
+  out.gain.exponentialRampToValueAtTime(0.12, t + 0.02)
+  out.gain.exponentialRampToValueAtTime(0.0001, end)
+  out.connect(audioBus(ctx))
+
+  const chop = ctx.createOscillator()
+  chop.type = 'square'
+  chop.frequency.setValueAtTime(38, t)
+  chop.frequency.linearRampToValueAtTime(64, end)
+  const chopDepth = ctx.createGain()
+  chopDepth.gain.value = 0.09
+  chop.connect(chopDepth)
+  chopDepth.connect(out.gain)
+  chop.start(t)
+  chop.stop(end)
+
+  const tone = ctx.createBiquadFilter()
+  tone.type = 'bandpass'
+  tone.frequency.setValueAtTime(1800, t)
+  tone.frequency.exponentialRampToValueAtTime(900, end)
+  tone.Q.value = 2.2
+  tone.connect(out)
+
+  for (const detune of [-18, 21]) {
+    const osc = ctx.createOscillator()
+    osc.type = 'sawtooth'
+    osc.detune.value = detune
+    osc.frequency.setValueAtTime(210, t)
+    osc.frequency.exponentialRampToValueAtTime(150, end)
+    osc.connect(tone)
+    osc.start(t)
+    osc.stop(end)
+  }
+
+  const scrape = noiseSource(ctx, 0.4)
+  const rasp = ctx.createBiquadFilter()
+  rasp.type = 'bandpass'
+  rasp.Q.value = 1.4
+  rasp.frequency.setValueAtTime(3200, t)
+  rasp.frequency.exponentialRampToValueAtTime(1600, end)
+  const scrapeGain = ctx.createGain()
+  scrapeGain.gain.setValueAtTime(0.0001, t)
+  scrapeGain.gain.exponentialRampToValueAtTime(0.07, t + 0.03)
+  scrapeGain.gain.exponentialRampToValueAtTime(0.0001, end)
+  chopDepth.connect(scrapeGain.gain)
+  scrape.connect(rasp); rasp.connect(scrapeGain); scrapeGain.connect(audioBus(ctx))
+  scrape.start(t)
+  scrape.stop(end)
+}
+
+/**
  * The snore.
  *
  * Refreshing wakes the thing up, so it complains about it. This is the AUGHHH
@@ -1433,6 +1563,465 @@ function revRelease () {
     if (latest) render(latest)
   }, REV_FALL_MS)
 }
+
+// ---------- gearbox ----------
+
+/**
+ * A clutch and an H-pattern shifter for choosing a model.
+ *
+ * The point of the metaphor is that it behaves like the thing it looks like:
+ *
+ *   - The lever will not leave a gate with the clutch up. Forcing it grinds,
+ *     and the lever stays where it was.
+ *   - Movement is constrained to the gate, not to the pointer. You travel along
+ *     a slot to the neutral rail, across the rail, then down another slot —
+ *     exactly as a real gate makes you.
+ *   - Nothing engages while the clutch is down. The model changes at the bite
+ *     point on the way back up, which is when a real one takes drive.
+ *
+ * The renderer never sends a model name anywhere. It sends the provider id and
+ * the gear number it is in; main resolves those against the catalogue and is
+ * the only thing that decides what, if anything, gets written.
+ */
+
+// Marks for each provider. Drawn here as plain geometry rather than shipped as
+// image assets: the page's content policy forbids remote loads, and these are
+// deliberately original shapes rather than reproductions of company logos.
+const MAKE_MARKS = {
+  anthropic: [['path', { d: 'M8 2 L3.2 14 M8 2 L12.8 14 M5.4 10.4 H10.6' }]],
+  openai: [['path', { d: 'M8 2 L13.2 5 V11 L8 14 L2.8 11 V5 Z' }]],
+  google: [['path', { d: 'M13 5.2 A6 6 0 1 0 14 8 H8' }]],
+  xai: [['path', { d: 'M3.2 3.2 L12.8 12.8 M12.8 3.2 L3.2 12.8' }]],
+  meta: [['circle', { cx: 5.8, cy: 8, r: 3.6 }], ['circle', { cx: 10.2, cy: 8, r: 3.6 }]],
+  mistral: [['path', { d: 'M3 4.5 H13 M3 7.2 H10 M3 9.9 H13 M3 12.6 H7' }]],
+  deepseek: [['path', { d: 'M2.4 9.6 Q5.2 5.2 8 9.6 T13.6 9.6' }]],
+  cohere: [['path', { d: 'M3.4 12.6 A6.5 6.5 0 0 1 12.6 3.4' }],
+    ['path', { d: 'M6.2 12.2 A4 4 0 0 1 12.2 6.2' }]]
+}
+
+function makeMark (id) {
+  const svg = svgEl('svg', { viewBox: '0 0 16 16' })
+  // hasOwn, not a bare lookup: an id of "constructor" or "__proto__" would
+  // otherwise reach Object.prototype and hand back something un-iterable
+  const parts = Object.hasOwn(MAKE_MARKS, id) ? MAKE_MARKS[id] : MAKE_MARKS.anthropic
+  for (const [tag, attrs] of parts) {
+    svg.appendChild(svgEl(tag, {
+      ...attrs,
+      fill: 'none',
+      stroke: 'currentColor',
+      'stroke-width': 1.6,
+      'stroke-linecap': 'round',
+      'stroke-linejoin': 'round'
+    }))
+  }
+  return svg
+}
+
+const HEX_COLOR = /^#[0-9a-f]{3,8}$/i
+
+const gbNodes = {
+  panel: el('gearbox'),
+  close: el('gb-close'),
+  makes: el('gb-makes'),
+  pedal: el('gb-pedal'),
+  gate: el('gb-gate'),
+  lamp: el('gb-lamp'),
+  status: el('gb-status'),
+  note: el('gb-note')
+}
+
+// gate geometry, in the gate's own viewBox units
+const GATE_W = 260
+const RAIL_Y = 105
+const SLOT_TOP = 52
+const SLOT_BOTTOM = 158
+const SLOT_GAP = 70
+const DETENT_R = 22      // how close to a gear counts as being in it
+const RAIL_GRAB = 9      // how far off the rail before a slot takes the lever
+const BITE_MS = 190      // clutch travel before it takes drive
+
+let gbCatalog = []
+let gbProviderId = null
+let gbState = { providerId: null, gear: null, previous: null }
+let gbSlots = []         // x of each column
+let gbPositions = []     // { gear, label, detail, x, y, node }
+let clutchDown = false
+let dragging = false
+let lever = { x: GATE_W / 2, y: RAIL_Y, lane: null }
+let leverNode = null
+let biteTimer = null
+let lastDetent = null
+
+const gbProvider = () => gbCatalog.find(p => p.id === gbProviderId) || gbCatalog[0] || null
+
+/**
+ * Where each gear sits. Columns fill left to right, top before bottom, and
+ * reverse takes the next free position after the last gear — which is how a
+ * five-speed ends up with R in the bottom right and a four-speed does not.
+ */
+function layoutGate (provider) {
+  const gears = provider ? provider.gears : []
+  const slots = Math.max(2, Math.ceil((gears.length + 1) / 2))
+  const span = (slots - 1) * SLOT_GAP
+  const left = (GATE_W - span) / 2
+
+  gbSlots = []
+  for (let i = 0; i < slots; i++) gbSlots.push(left + i * SLOT_GAP)
+
+  const at = index => ({
+    x: gbSlots[Math.floor(index / 2)],
+    y: index % 2 === 0 ? SLOT_TOP : SLOT_BOTTOM
+  })
+
+  const positions = gears.map((g, i) => ({
+    gear: g.gear, label: g.label, detail: g.detail, ...at(i)
+  }))
+  positions.push({ gear: 'R', label: 'Reverse', detail: 'last model', ...at(gears.length) })
+  return positions
+}
+
+function buildGate () {
+  const provider = gbProvider()
+  gbNodes.gate.textContent = ''
+  gbPositions = layoutGate(provider)
+  if (!provider) return
+
+  const defs = svgEl('defs', {})
+  const grad = svgEl('radialGradient', { id: 'gb-knob-fill', cx: '35%', cy: '30%', r: '75%' })
+  grad.appendChild(svgEl('stop', { offset: '0%', 'stop-color': '#6A6353' }))
+  grad.appendChild(svgEl('stop', { offset: '100%', 'stop-color': '#2A251D' }))
+  defs.appendChild(grad)
+  gbNodes.gate.appendChild(defs)
+
+  // The gate is cut into a plate: a wide dark stroke for the channel, a lighter
+  // one inside it for the machined lip.
+  const parts = ['M' + gbSlots[0] + ' ' + RAIL_Y + ' H' + gbSlots[gbSlots.length - 1]]
+  for (const x of gbSlots) parts.push('M' + x + ' ' + SLOT_TOP + ' V' + SLOT_BOTTOM)
+  const d = parts.join(' ')
+  gbNodes.gate.appendChild(svgEl('path', { d: d, class: 'gb-slot', 'stroke-width': 19 }))
+  gbNodes.gate.appendChild(svgEl('path', { d: d, class: 'gb-slot-lip', 'stroke-width': 13 }))
+
+  for (const pos of gbPositions) {
+    const group = svgEl('g', { class: 'gb-gear' })
+    group.dataset.gear = String(pos.gear)
+    group.appendChild(svgEl('circle', { cx: pos.x, cy: pos.y, r: 9, class: 'gb-detent' }))
+
+    const above = pos.y === SLOT_TOP
+    const num = svgEl('text', { x: pos.x, y: pos.y + (above ? -16 : 27), class: 'gb-gear-num' })
+    num.textContent = String(pos.gear)
+    group.appendChild(num)
+
+    const name = svgEl('text', { x: pos.x, y: pos.y + (above ? -6 : 37), class: 'gb-gear-name' })
+    name.textContent = pos.label
+    group.appendChild(name)
+
+    gbNodes.gate.appendChild(group)
+    pos.node = group
+  }
+
+  leverNode = svgEl('g', { class: 'gb-lever' })
+  leverNode.appendChild(svgEl('ellipse', { class: 'gb-knob-shadow', cx: 0, cy: 8, rx: 13, ry: 4 }))
+  leverNode.appendChild(svgEl('line', { class: 'gb-shaft', x1: 0, y1: 4, x2: 0, y2: 17 }))
+  leverNode.appendChild(svgEl('circle', { class: 'gb-knob', cx: 0, cy: 0, r: 13 }))
+  leverNode.appendChild(svgEl('path', { class: 'gb-knob-cap', d: 'M-7 -5 A8 8 0 0 1 6 -6' }))
+  gbNodes.gate.appendChild(leverNode)
+
+  const home = gbPositions.find(p => p.gear === gbState.gear)
+  placeLever(home ? home.x : GATE_W / 2, home ? home.y : RAIL_Y)
+  lever.lane = home ? gbSlots.indexOf(home.x) : null
+  markEngaged()
+}
+
+function placeLever (x, y) {
+  lever.x = x
+  lever.y = y
+  if (leverNode) {
+    leverNode.setAttribute('transform', 'translate(' + x.toFixed(1) + ' ' + y.toFixed(1) + ')')
+  }
+}
+
+/** The gear the lever is currently sitting in, or null for neutral. */
+function gearUnderLever () {
+  for (const pos of gbPositions) {
+    const dx = pos.x - lever.x
+    const dy = pos.y - lever.y
+    if (dx * dx + dy * dy <= DETENT_R * DETENT_R) return pos
+  }
+  return null
+}
+
+function markEngaged () {
+  for (const pos of gbPositions) {
+    if (pos.node) pos.node.classList.toggle('on', pos.gear === gbState.gear)
+  }
+}
+
+/**
+ * Constrain a pointer position to the gate.
+ *
+ * The lever is either on the rail or in a slot, and can only change between the
+ * two at a crossing. This is the whole feel of an H-pattern: you cannot cut the
+ * corner from 1st to 2nd, you go up, across, and down.
+ */
+function constrain (px, py) {
+  const first = gbSlots[0]
+  const last = gbSlots[gbSlots.length - 1]
+
+  if (lever.lane === null) {
+    const x = Math.min(last, Math.max(first, px))
+    // pulling away from the rail near a slot drops the lever into it
+    if (Math.abs(py - RAIL_Y) > RAIL_GRAB) {
+      const near = gbSlots.findIndex(sx => Math.abs(sx - x) < SLOT_GAP / 2)
+      if (near !== -1) {
+        lever.lane = near
+        return { x: gbSlots[near], y: Math.min(SLOT_BOTTOM, Math.max(SLOT_TOP, py)) }
+      }
+    }
+    return { x: x, y: RAIL_Y }
+  }
+
+  const slotX = gbSlots[lever.lane]
+  const y = Math.min(SLOT_BOTTOM, Math.max(SLOT_TOP, py))
+  // back at the rail, the lever is free to travel across it again
+  if (Math.abs(y - RAIL_Y) < RAIL_GRAB) {
+    lever.lane = null
+    return { x: slotX, y: RAIL_Y }
+  }
+  return { x: slotX, y: y }
+}
+
+function gatePoint (event) {
+  const box = gbNodes.gate.getBoundingClientRect()
+  if (!box.width) return null
+  const scale = GATE_W / box.width
+  return {
+    x: (event.clientX - box.left) * scale,
+    y: (event.clientY - box.top) * scale
+  }
+}
+
+function refuse () {
+  if (!leverNode) return
+  leverNode.classList.remove('grind')
+  void leverNode.getBoundingClientRect()
+  leverNode.classList.add('grind')
+  playGrind()
+  setGearStatus('Clutch is up — the lever will not move.', 'slipping')
+}
+
+function moveLever (point) {
+  const next = constrain(point.x, point.y)
+  placeLever(next.x, next.y)
+  const found = gearUnderLever()
+  const key = found ? String(found.gear) : null
+  if (key !== lastDetent) {
+    lastDetent = key
+    if (found) { playDetent(); describeGear(found) }
+    else setGearStatus('Neutral. Slot the lever into a gear.', null)
+  }
+}
+
+function describeGear (pos) {
+  const provider = gbProvider()
+  const suffix = pos.detail ? ' · ' + pos.detail : ''
+  setGearStatus(pos.gear === 'R'
+    ? 'Reverse — back to the last model'
+    : pos.label + suffix + '  (release the clutch to engage)', null)
+  if (provider) gbNodes.note.textContent = provider.note || ''
+}
+
+function setGearStatus (text, lamp) {
+  gbNodes.status.textContent = text
+  gbNodes.lamp.classList.toggle('engaged', lamp === 'engaged')
+  gbNodes.lamp.classList.toggle('slipping', lamp === 'slipping')
+}
+
+// ---- the clutch itself ----
+
+function pressClutch () {
+  if (clutchDown) return
+  clutchDown = true
+  clearTimeout(biteTimer)
+  gbNodes.pedal.classList.add('down')
+  gbNodes.pedal.setAttribute('aria-pressed', 'true')
+  if (leverNode) leverNode.classList.add('free')
+  playClutch(true)
+  setGearStatus('Clutch in — the lever is free.', 'slipping')
+}
+
+function releaseClutch () {
+  if (!clutchDown) return
+  clutchDown = false
+  dragging = false
+  gbNodes.pedal.classList.remove('down')
+  gbNodes.pedal.setAttribute('aria-pressed', 'false')
+  if (leverNode) leverNode.classList.remove('free')
+  playClutch(false)
+
+  // Drive is taken at the bite point, part way through the pedal coming back —
+  // not the instant it is let go.
+  clearTimeout(biteTimer)
+  biteTimer = setTimeout(() => {
+    const found = gearUnderLever()
+    if (!found) { setGearStatus('Neutral.', null); return }
+    engageGear(found.gear)
+  }, BITE_MS)
+}
+
+async function engageGear (gear) {
+  const provider = gbProvider()
+  if (!provider) return
+  playEngage()
+  const result = await window.meter.setGear(provider.id, gear)
+  if (!result || !result.ok) {
+    setGearStatus(gearFailure(result), 'slipping')
+    return
+  }
+  gbState = result.gearbox
+  // Reverse can drop back into a gear on a different make, so the gate follows
+  // the shifter rather than leaving it marked on a plate it is not in.
+  if (gbState.providerId !== gbProviderId) {
+    gbProviderId = gbState.providerId
+    for (const chip of gbNodes.makes.children) {
+      chip.classList.toggle('on', chip.dataset.make === gbProviderId)
+    }
+    buildGate()
+  }
+  markEngaged()
+  const home = gbPositions.find(p => p.gear === gbState.gear)
+  if (home) { placeLever(home.x, home.y); lever.lane = gbSlots.indexOf(home.x) }
+  setGearStatus(result.applied
+    ? 'Engaged — ' + result.label + ' written to settings.json'
+    : 'Selected ' + result.label + ' — recorded only, see below', 'engaged')
+}
+
+function gearFailure (result) {
+  const reason = result ? result.reason : 'unknown'
+  if (reason === 'nothing_to_reverse_to') return 'Nothing to reverse into yet.'
+  if (reason === 'no_settings_file') return 'No settings.json to write to.'
+  if (reason === 'malformed_settings') return 'settings.json is not valid JSON — refusing to rewrite it.'
+  if (reason === 'unreadable' || reason === 'write_failed') return 'Could not write settings.json.'
+  return 'Refused: ' + reason
+}
+
+function buildMakes () {
+  gbNodes.makes.textContent = ''
+  for (const provider of gbCatalog) {
+    const chip = document.createElement('button')
+    chip.className = 'gb-make'
+    chip.dataset.make = provider.id
+    // Straight into a custom property, so it is confirmed to be a plain hex
+    // colour first — a value carrying its own semicolon would otherwise be able
+    // to append declarations of its choosing.
+    chip.style.setProperty('--make', HEX_COLOR.test(provider.accent || '')
+      ? provider.accent
+      : 'var(--muted)')
+    chip.title = provider.product + ' — ' + (provider.configurable
+      ? 'this dashboard can set its model'
+      : 'listed only; this dashboard cannot set its model')
+    chip.appendChild(makeMark(provider.id))
+    const label = document.createElement('span')
+    label.textContent = provider.name
+    chip.appendChild(label)
+    chip.addEventListener('click', () => selectMake(provider.id))
+    gbNodes.makes.appendChild(chip)
+  }
+}
+
+function selectMake (id) {
+  if (gbProviderId === id) return
+  gbProviderId = id
+  for (const chip of gbNodes.makes.children) chip.classList.toggle('on', chip.dataset.make === id)
+  buildGate()
+  const provider = gbProvider()
+  gbNodes.note.textContent = provider ? provider.note || '' : ''
+  setGearStatus(provider && provider.configurable
+    ? 'Hold the clutch to shift.'
+    : 'Listed only — engaging records the choice without changing ' +
+      (provider ? provider.product : 'it') + '.', null)
+}
+
+function renderGearbox (data) {
+  if (!data.catalog) return
+  const first = gbCatalog.length === 0
+  gbCatalog = data.catalog
+  gbState = data.gearbox || gbState
+  if (first || !gbProviderId) gbProviderId = gbState.providerId || gbCatalog[0].id
+
+  if (first) {
+    buildMakes()
+    buildGate()
+  }
+  for (const chip of gbNodes.makes.children) {
+    chip.classList.toggle('on', chip.dataset.make === gbProviderId)
+  }
+  markEngaged()
+}
+
+function openGearbox () {
+  if (latest) renderGearbox(latest)
+  gbNodes.panel.removeAttribute('hidden')
+  const provider = gbProvider()
+  gbNodes.note.textContent = provider ? provider.note || '' : ''
+  setGearStatus('Hold the clutch to shift.', gbState.gear !== null ? 'engaged' : null)
+}
+
+function closeGearbox () {
+  if (clutchDown) releaseClutch()
+  gbNodes.panel.setAttribute('hidden', '')
+}
+
+gbNodes.gate.addEventListener('pointerdown', event => {
+  if (!gbPositions.length) return
+  if (!clutchDown) { refuse(); return }
+  const point = gatePoint(event)
+  if (!point) return
+  dragging = true
+  // Capture keeps the lever following the pointer past the edge of the gate.
+  // It throws if the pointer is already gone, which must not abandon the drag
+  // half-set-up — the move handler works without capture, just less smoothly.
+  try { gbNodes.gate.setPointerCapture(event.pointerId) } catch { /* no capture */ }
+  moveLever(point)
+})
+
+gbNodes.gate.addEventListener('pointermove', event => {
+  if (!dragging) return
+  const point = gatePoint(event)
+  if (point) moveLever(point)
+})
+
+const endGateDrag = event => {
+  if (!dragging) return
+  dragging = false
+  try { gbNodes.gate.releasePointerCapture(event.pointerId) } catch { /* already released */ }
+  // let go mid-slot and the lever settles into the nearest detent, as a sprung
+  // gate would; let go on the rail and it stays in neutral
+  const found = gearUnderLever()
+  if (found) { placeLever(found.x, found.y); describeGear(found) }
+}
+gbNodes.gate.addEventListener('pointerup', endGateDrag)
+gbNodes.gate.addEventListener('pointercancel', endGateDrag)
+
+gbNodes.pedal.addEventListener('pointerdown', event => {
+  event.preventDefault()
+  pressClutch()
+})
+// Released anywhere: letting go with the pointer off the pedal is still a
+// release, and a pedal that stayed stuck down would be a trap.
+window.addEventListener('pointerup', () => { if (clutchDown) releaseClutch() })
+window.addEventListener('blur', () => { if (clutchDown) releaseClutch() })
+
+// Space is the keyboard clutch, so this works without a pointer at all.
+document.addEventListener('keydown', event => {
+  if (gbNodes.panel.hasAttribute('hidden')) return
+  if (event.code === 'Space' && !event.repeat) { event.preventDefault(); pressClutch() }
+})
+document.addEventListener('keyup', event => {
+  if (event.code === 'Space' && clutchDown) { event.preventDefault(); releaseClutch() }
+})
+
+el('btn-gearbox').addEventListener('click', openGearbox)
+gbNodes.close.addEventListener('click', closeGearbox)
 
 // ---------- settings ----------
 
@@ -1596,7 +2185,9 @@ setNodes.reset.addEventListener('click', () => {
 
 // Escape backs out of the panel, the way it backs out of the model menu.
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && !setNodes.panel.hasAttribute('hidden')) closeSettings()
+  if (e.key !== 'Escape') return
+  if (!gbNodes.panel.hasAttribute('hidden')) closeGearbox()
+  else if (!setNodes.panel.hasAttribute('hidden')) closeSettings()
 })
 
 // ---------- wiring ----------
@@ -1637,7 +2228,7 @@ nodes.btnCloseMini.addEventListener('click', () => window.meter.close())
 function setCollapsed (collapsed) {
   // the pill has no room for the panel, so collapsing closes it rather than
   // parking it out of sight to reappear on the next expand
-  if (collapsed) closeSettings()
+  if (collapsed) { closeSettings(); closeGearbox() }
   document.body.classList.toggle('mini', collapsed)
   window.meter.setMini(collapsed)
 }

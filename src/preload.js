@@ -16,5 +16,7 @@ contextBridge.exposeInMainWorld('meter', {
   lock: () => ipcRenderer.send('ui:lock'),
   openVendor: vendorId => ipcRenderer.invoke('ui:open-vendor', String(vendorId)),
   setSetting: (key, value) => ipcRenderer.invoke('ui:setting', String(key), value),
-  resetSettings: () => ipcRenderer.invoke('ui:settings-reset')
+  resetSettings: () => ipcRenderer.invoke('ui:settings-reset'),
+  // gear is a number or the string 'R'; main resolves both against the catalogue
+  setGear: (providerId, gear) => ipcRenderer.invoke('ui:gear', String(providerId), gear)
 })
