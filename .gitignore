@@ -1,0 +1,23 @@
+# dependencies
+node_modules/
+
+# electron-builder output
+dist/
+out/
+release/
+
+# one-off verification script: its anchor values are hardcoded from a single
+# local session, so they mean nothing on another machine
+verify.js
+
+# editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# logs
+*.log
+npm-debug.log*
+COMMIT_MSG.tmp

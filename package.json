@@ -1,0 +1,35 @@
+{
+  "name": "claude-meter",
+  "version": "0.1.0",
+  "description": "A cute always-on-top desktop widget showing Claude usage quota as progress bars",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "dev.local.claude-meter",
+    "productName": "ClaudeSpeedometer",
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "portable"
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.developer-tools"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  },
+  "productName": "Claude Speedometer"
+}

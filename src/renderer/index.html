@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; style-src 'self'; script-src 'self'">
+  <title>LLM Speedometer</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="card" id="card">
+    <div class="lock" id="lock" hidden>
+      <div class="fob" id="fob">
+        <div class="fob-top">
+          <span class="fob-brand">LLM</span>
+          <span class="fob-led" id="fob-led"></span>
+        </div>
+        <button class="fob-btn" id="fob-unlock" title="Press to unlock">
+          <svg class="padlock" viewBox="0 0 24 30" aria-hidden="true">
+            <path class="shackle" d="M7 14 V9.5 A5 5 0 0 1 17 9.5 V14" />
+            <rect class="lockbody" x="2.5" y="13.5" width="19" height="14.5" rx="3.2" />
+            <circle class="keyhole" cx="12" cy="19.6" r="1.9" />
+            <rect class="keyslot" x="11.2" y="20" width="1.6" height="4" rx="0.8" />
+          </svg>
+        </button>
+        <div class="fob-label" id="fob-label"><span>LOCKED</span></div>
+      </div>
+
+      <div class="lock-title">SELECT PROVIDER</div>
+      <div class="vendors" id="vendors"></div>
+      <div class="lock-status" id="lock-status">&#8212;</div>
+      <button class="lock-open" id="lock-open" hidden>Open sign-in page &#8599;</button>
+    </div>
+
+    <div class="header">
+      <div class="hdr-top">
+        <div class="brand">
+          <span class="brand-name">LLM Speedometer</span>
+          <span class="brand-ver" id="hdr-version">v0.1.0</span>
+          <span class="brand-by">By William Fan</span>
+        </div>
+        <div class="controls">
+          <button class="ctl" id="btn-lock" title="Lock / switch provider">&#128274;</button>
+          <button class="ctl" id="btn-min" title="Collapse">&#9472;</button>
+          <button class="ctl ctl-close" id="btn-close" title="Close">&#10005;</button>
+        </div>
+      </div>
+
+      <div class="acct" id="acct" title="Account associated with this LLM">&#8230;</div>
+
+      <div class="chips">
+        <span class="chip chip-company" id="chip-company">&#8212;</span>
+        <span class="chip" id="chip-tier">&#8212;</span>
+        <button class="chip chip-model" id="chip-model">&#8212;</button>
+        <div class="menu" id="model-menu" hidden></div>
+      </div>
+
+      <div class="hdr-cwd" id="hdr-cwd" title="Current file directory">&#8212;</div>
+    </div>
+
+    <div class="menu-backdrop" id="menu-backdrop" hidden></div>
+
+    <div class="titlebar">
+      <div class="mascot-row">
+        <span class="mascot" id="mascot">( &#728;&#8202;&#969;&#8202;&#728; )</span>
+        <span class="mini-only">
+          <span class="mini-pct" id="mini-pct">--</span>
+          <button class="ctl" id="btn-expand" title="Expand">&#9633;</button>
+          <button class="ctl ctl-close" id="btn-close-mini" title="Close">&#10005;</button>
+        </span>
+      </div>
+    </div>
+
+    <!-- Instrument cluster. All geometry is generated in app.js so the three
+         dials share one drawing routine instead of duplicating arc math. -->
+    <svg class="cluster" id="cluster" viewBox="0 0 422 172" aria-hidden="true"></svg>
+
+
+
+
+
+    <div class="lower">
+      <div class="odo" id="odo">
+        <div class="odo-row odo-trip">
+          <span class="odo-label">TRIP</span>
+          <span class="odo-drum" id="odo-trip"></span>
+          <span class="odo-unit">TOK</span>
+        </div>
+        <div class="odo-row">
+          <span class="odo-label">ODO</span>
+          <span class="odo-drum" id="odo-total"></span>
+          <span class="odo-unit">TOK</span>
+        </div>
+      </div>
+
+    <div class="tasks" id="tasks">
+      <div class="tasks-head">
+        <span class="tasks-title" id="tasks-title">SESSIONS</span>
+        <span class="tasks-count" id="tasks-count">&#8212;</span>
+      </div>
+      <div class="tasks-list" id="tasks-list"></div>
+    </div>
+    </div>
+
+    <div class="footer">
+      <span class="reset" id="reset" title="Diagnostics">&#10227; --</span>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
