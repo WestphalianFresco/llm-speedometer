@@ -333,6 +333,23 @@ function paintRing (key, value) {
  */
 const SPRING_K = 0.11
 const SPRING_D = 0.76
+/**
+ * A second damping figure, used only while a needle is being returned from full
+ * scale to a live reading.
+ *
+ * The normal spring is deliberately underdamped — that overshoot is what makes
+ * the needles feel sprung rather than animated. But a rev drops the tach from
+ * 20,000 to whatever you are actually running at, and an underdamped spring
+ * takes a fall that big well past the target: to 4.7k on the way to 7.4k, and
+ * straight through zero for any live rate under about 3k. That is the needle
+ * hitting the bottom stop and climbing back, which is exactly what it looked
+ * like.
+ *
+ * For K = 0.11 the discrete system stops overshooting at D <= 0.564, so this is
+ * critical damping rather than a number picked by eye: the needle falls to the
+ * live rate and stops there.
+ */
+const SPRING_D_SETTLE = 0.56
 
 const makeDialState = dial => ({
   target: 0,
@@ -342,6 +359,8 @@ const makeDialState = dial => ({
   // a 0-100 tank as on a 0-100000 speedometer
   amplitude: (dial.wanderPct / 100) * dial.max,
   drift: 0,
+  // while set, the needle is settling from a sweep and must not overshoot
+  settleUntil: 0,
   clock: Math.random() * 100,
   phase: [Math.random() * 6.283, Math.random() * 6.283, Math.random() * 6.283],
   idle: true
@@ -372,7 +391,8 @@ function frame (now) {
   for (const key of DIAL_KEYS) {
     const s = dialState[key]
 
-    s.velocity = (s.velocity + (s.target - s.current) * SPRING_K) * SPRING_D
+    const damping = now < s.settleUntil ? SPRING_D_SETTLE : SPRING_D
+    s.velocity = (s.velocity + (s.target - s.current) * SPRING_K) * damping
     s.current += s.velocity
 
     let shown = s.current
@@ -956,8 +976,11 @@ function renderLock (data) {
  * turns when the one to its right carries into it, so each place starts a beat
  * later than its neighbour and the change ripples leftward.
  */
+// Both drums carry the same number of wheels, so the two readings line up
+// column for column and the trip pads with leading zeroes rather than sitting
+// short and inset.
 const ODO_DIGITS = 9
-const TRIP_DIGITS = 7
+const TRIP_DIGITS = 9
 
 const DRUM_FACES = 20            // 0-9 twice, so a 9 -> 0 wrap has road ahead
 const DRUM_STAGGER_MS = 80       // how far each place lags the one to its right
@@ -1554,6 +1577,10 @@ function revEngine () {
 function revRelease () {
   clearInterval(revLimiterTimer)
   revLimiterTimer = null
+  // Coming down off the limiter is the one moment the tach must not overshoot:
+  // the drop is most of the dial, and an underdamped return goes through the
+  // bottom stop before climbing back to the live rate.
+  dialState.tach.settleUntil = performance.now() + REV_FALL_MS + 400
   setNeedle('tach', latest ? latest.tokensPerMinute || 0 : revPreTarget)
   revVoiceStop()
   revFallTimer = setTimeout(() => {
@@ -1644,6 +1671,7 @@ let gbState = { providerId: null, gear: null, previous: null }
 let gbSlots = []         // x of each column
 let gbPositions = []     // { gear, label, detail, x, y, node }
 let clutchDown = false
+let clutchMode = null
 let dragging = false
 let lever = { x: GATE_W / 2, y: RAIL_Y, lane: null }
 let leverNode = null
@@ -1711,12 +1739,14 @@ function buildGate () {
     group.dataset.gear = String(pos.gear)
     group.appendChild(svgEl('circle', { cx: pos.x, cy: pos.y, r: 9, class: 'gb-detent' }))
 
+    // Both labels clear the knob, which covers 13 units either side of the
+    // detent — the model name used to sit under it in the top row.
     const above = pos.y === SLOT_TOP
-    const num = svgEl('text', { x: pos.x, y: pos.y + (above ? -16 : 27), class: 'gb-gear-num' })
+    const num = svgEl('text', { x: pos.x, y: pos.y + (above ? -19 : 27), class: 'gb-gear-num' })
     num.textContent = String(pos.gear)
     group.appendChild(num)
 
-    const name = svgEl('text', { x: pos.x, y: pos.y + (above ? -6 : 37), class: 'gb-gear-name' })
+    const name = svgEl('text', { x: pos.x, y: pos.y + (above ? -30 : 37), class: 'gb-gear-name' })
     name.textContent = pos.label
     group.appendChild(name)
 
@@ -1838,9 +1868,10 @@ function moveLever (point) {
 function describeGear (pos) {
   const provider = gbProvider()
   const suffix = pos.detail ? ' · ' + pos.detail : ''
+  const how = clutchMode === 'latch' ? 'click the pedal to engage' : 'release the clutch to engage'
   setGearStatus(pos.gear === 'R'
-    ? 'Reverse — back to the last model'
-    : pos.label + suffix + '  (release the clutch to engage)', null)
+    ? 'Reverse — back to the last model  (' + how + ')'
+    : pos.label + suffix + '  (' + how + ')', null)
   if (provider) gbNodes.note.textContent = provider.note || ''
 }
 
@@ -1852,15 +1883,25 @@ function setGearStatus (text, lamp) {
 
 // ---- the clutch itself ----
 
-function pressClutch () {
+/**
+ * @param {'latch'|'hold'} mode how the clutch was put down, which decides how
+ *   it comes back up. A foot stays on a pedal while a hand shifts; a pointer
+ *   cannot, because there is only one of it. So the pedal latches when clicked
+ *   and a second click lets it up, while the keyboard clutch stays momentary
+ *   and behaves like the real thing.
+ */
+function pressClutch (mode) {
   if (clutchDown) return
+  clutchMode = mode
   clutchDown = true
   clearTimeout(biteTimer)
   gbNodes.pedal.classList.add('down')
   gbNodes.pedal.setAttribute('aria-pressed', 'true')
   if (leverNode) leverNode.classList.add('free')
   playClutch(true)
-  setGearStatus('Clutch in — the lever is free.', 'slipping')
+  setGearStatus(mode === 'latch'
+    ? 'Clutch in — drag the lever, then click the pedal to engage.'
+    : 'Clutch in — the lever is free.', 'slipping')
 }
 
 function releaseClutch () {
@@ -1950,7 +1991,7 @@ function selectMake (id) {
   const provider = gbProvider()
   gbNodes.note.textContent = provider ? provider.note || '' : ''
   setGearStatus(provider && provider.configurable
-    ? 'Hold the clutch to shift.'
+    ? 'Click the clutch pedal to shift (or hold Space).'
     : 'Listed only — engaging records the choice without changing ' +
       (provider ? provider.product : 'it') + '.', null)
 }
@@ -1977,7 +2018,7 @@ function openGearbox () {
   gbNodes.panel.removeAttribute('hidden')
   const provider = gbProvider()
   gbNodes.note.textContent = provider ? provider.note || '' : ''
-  setGearStatus('Hold the clutch to shift.', gbState.gear !== null ? 'engaged' : null)
+  setGearStatus('Click the clutch pedal to shift (or hold Space).', gbState.gear !== null ? 'engaged' : null)
 }
 
 function closeGearbox () {
@@ -2016,22 +2057,30 @@ const endGateDrag = event => {
 gbNodes.gate.addEventListener('pointerup', endGateDrag)
 gbNodes.gate.addEventListener('pointercancel', endGateDrag)
 
+// Click puts it down and leaves it down; click again to let it up. Holding the
+// button instead would leave you with no pointer to shift with.
 gbNodes.pedal.addEventListener('pointerdown', event => {
   event.preventDefault()
-  pressClutch()
+  if (clutchDown) releaseClutch()
+  else pressClutch('latch')
 })
-// Released anywhere: letting go with the pointer off the pedal is still a
-// release, and a pedal that stayed stuck down would be a trap.
-window.addEventListener('pointerup', () => { if (clutchDown) releaseClutch() })
-window.addEventListener('blur', () => { if (clutchDown) releaseClutch() })
 
-// Space is the keyboard clutch, so this works without a pointer at all.
+// Space is the keyboard clutch and stays momentary — with a keyboard you really
+// can hold the clutch and shift at the same time.
 document.addEventListener('keydown', event => {
   if (gbNodes.panel.hasAttribute('hidden')) return
-  if (event.code === 'Space' && !event.repeat) { event.preventDefault(); pressClutch() }
+  if (event.code === 'Space' && !event.repeat) { event.preventDefault(); pressClutch('hold') }
 })
 document.addEventListener('keyup', event => {
-  if (event.code === 'Space' && clutchDown) { event.preventDefault(); releaseClutch() }
+  if (event.code === 'Space' && clutchDown && clutchMode === 'hold') {
+    event.preventDefault()
+    releaseClutch()
+  }
+})
+// A held key whose keyup lands in another window would leave the clutch stuck
+// down; a latched pedal is meant to stay down, so it survives.
+window.addEventListener('blur', () => {
+  if (clutchDown && clutchMode === 'hold') releaseClutch()
 })
 
 el('btn-gearbox').addEventListener('click', openGearbox)

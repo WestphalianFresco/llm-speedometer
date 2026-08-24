@@ -1151,15 +1151,14 @@ body.mini .gearbox { display: none; }
     rgba(0,0,0,.15) 72%, rgba(0,0,0,.85) 100%);
 }
 
-/* the trip meter is the smaller, amber-lit wheel set */
+/* The trip is the amber-lit wheel set. Same wheel size as the odometer above
+   it, so the two rows read as one instrument with its columns aligned rather
+   than as two unrelated readouts. */
 .odo-trip .odo-digit {
-  width: 11px; height: 15px;
-  font-size: var(--fs-xs);
   color: #EFC078;
   background: linear-gradient(180deg,
     #070605 0%, #241c12 38%, #322616 50%, #241c12 62%, #070605 100%);
 }
-.odo-trip .odo-face { height: 15px; line-height: 15px; }
 
 .odo-unit {
   flex: none;
