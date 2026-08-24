@@ -1080,19 +1080,17 @@ function buildTooltip (data) {
 
 // Countdown ticks locally so the widget feels alive between polls.
 //
-// The two windows reset on completely different cadences, so the countdown has
-// to say which one it is counting. It used to fall through to the weekly reset
-// whenever the 5-hour reset was unknown and print the result bare — which read
-// as the 5-hour window being five days away.
+// This line is the 5-hour window and nothing else. It used to fall through to
+// the weekly reset whenever the 5-hour one was unknown, which put a number in
+// days on a readout everybody reads as the short window — worse than admitting
+// the value is not known yet. The weekly reset is still in the diagnostics
+// tooltip, where a multi-day figure is labelled and expected.
 function tickCountdown () {
   if (!latest) return
-  const now = Date.now()
   const five = latest.fiveHour.resetsAt
-  const week = latest.sevenDay.resetsAt
-
-  if (five) nodes.reset.textContent = '⟳ 5H · ' + formatCountdown(five - now)
-  else if (week) nodes.reset.textContent = '⟳ WEEK · ' + formatCountdown(week - now)
-  else nodes.reset.textContent = '⟳ reset time unknown'
+  nodes.reset.textContent = five
+    ? '⟳ 5H · ' + formatCountdown(five - Date.now())
+    : '⟳ 5H · reset time unknown'
 }
 // ticks every second now that the countdown is second-accurate
 setInterval(tickCountdown, 1000)
@@ -1649,6 +1647,7 @@ let clutchDown = false
 let dragging = false
 let lever = { x: GATE_W / 2, y: RAIL_Y, lane: null }
 let leverNode = null
+let leverPos = null
 let biteTimer = null
 let lastDetent = null
 
@@ -1695,8 +1694,14 @@ function buildGate () {
 
   // The gate is cut into a plate: a wide dark stroke for the channel, a lighter
   // one inside it for the machined lip.
+  // Only the legs that lead somewhere are cut. A two-speed box has no gate to
+  // the bottom right, and drawing one implies a gear that is not there.
+  const occupied = (x, y) => gbPositions.some(p => p.x === x && p.y === y)
   const parts = ['M' + gbSlots[0] + ' ' + RAIL_Y + ' H' + gbSlots[gbSlots.length - 1]]
-  for (const x of gbSlots) parts.push('M' + x + ' ' + SLOT_TOP + ' V' + SLOT_BOTTOM)
+  for (const x of gbSlots) {
+    if (occupied(x, SLOT_TOP)) parts.push('M' + x + ' ' + SLOT_TOP + ' V' + RAIL_Y)
+    if (occupied(x, SLOT_BOTTOM)) parts.push('M' + x + ' ' + RAIL_Y + ' V' + SLOT_BOTTOM)
+  }
   const d = parts.join(' ')
   gbNodes.gate.appendChild(svgEl('path', { d: d, class: 'gb-slot', 'stroke-width': 19 }))
   gbNodes.gate.appendChild(svgEl('path', { d: d, class: 'gb-slot-lip', 'stroke-width': 13 }))
@@ -1719,12 +1724,18 @@ function buildGate () {
     pos.node = group
   }
 
+  // Two groups, not one. The outer carries the position and the inner carries
+  // the shake — a CSS transform on the same element would win over the
+  // positioning transform attribute and fling the lever to the origin for as
+  // long as the animation ran.
+  leverPos = svgEl('g', {})
   leverNode = svgEl('g', { class: 'gb-lever' })
   leverNode.appendChild(svgEl('ellipse', { class: 'gb-knob-shadow', cx: 0, cy: 8, rx: 13, ry: 4 }))
   leverNode.appendChild(svgEl('line', { class: 'gb-shaft', x1: 0, y1: 4, x2: 0, y2: 17 }))
   leverNode.appendChild(svgEl('circle', { class: 'gb-knob', cx: 0, cy: 0, r: 13 }))
   leverNode.appendChild(svgEl('path', { class: 'gb-knob-cap', d: 'M-7 -5 A8 8 0 0 1 6 -6' }))
-  gbNodes.gate.appendChild(leverNode)
+  leverPos.appendChild(leverNode)
+  gbNodes.gate.appendChild(leverPos)
 
   const home = gbPositions.find(p => p.gear === gbState.gear)
   placeLever(home ? home.x : GATE_W / 2, home ? home.y : RAIL_Y)
@@ -1735,8 +1746,8 @@ function buildGate () {
 function placeLever (x, y) {
   lever.x = x
   lever.y = y
-  if (leverNode) {
-    leverNode.setAttribute('transform', 'translate(' + x.toFixed(1) + ' ' + y.toFixed(1) + ')')
+  if (leverPos) {
+    leverPos.setAttribute('transform', 'translate(' + x.toFixed(1) + ' ' + y.toFixed(1) + ')')
   }
 }
 
@@ -1781,7 +1792,10 @@ function constrain (px, py) {
   }
 
   const slotX = gbSlots[lever.lane]
-  const y = Math.min(SLOT_BOTTOM, Math.max(SLOT_TOP, py))
+  const hasTop = gbPositions.some(p => p.x === slotX && p.y === SLOT_TOP)
+  const hasBottom = gbPositions.some(p => p.x === slotX && p.y === SLOT_BOTTOM)
+  const y = Math.min(hasBottom ? SLOT_BOTTOM : RAIL_Y,
+    Math.max(hasTop ? SLOT_TOP : RAIL_Y, py))
   // back at the rail, the lever is free to travel across it again
   if (Math.abs(y - RAIL_Y) < RAIL_GRAB) {
     lever.lane = null
