@@ -153,14 +153,9 @@ html, body {
   display: flex; flex-direction: column; align-items: center; gap: 10px;
 }
 
-.fob-top { display: flex; align-items: center; justify-content: space-between; width: 100%; }
-
-.fob-brand {
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-bold);
-  letter-spacing: var(--ls-caps);
-  color: var(--tick-lit);
-}
+/* Only the LED lives up here now, so it sits at the right on its own rather
+   than being spaced away from a word that is no longer there. */
+.fob-top { display: flex; align-items: center; justify-content: flex-end; width: 100%; }
 
 .fob-led {
   width: 9px; height: 9px; border-radius: 50%;
@@ -177,11 +172,16 @@ html, body {
 .fob-led.blink { animation: led-chirp 300ms ease-out 2; }
 @keyframes led-chirp { 0%, 100% { opacity: 1; } 50% { opacity: .18; } }
 
-/* The shackle rises and drops straight, which is what a padlock does — an
-   earlier version swung it about one leg and it read as the whole lock tipping
-   over. Its legs run down inside the body, where the body (painted after it)
-   hides them, so it has somewhere to rise FROM without detaching. */
-.padlock { width: 38px; height: 54px; overflow: visible; }
+/* The shackle lifts clear of the body and then swings right round, hinged on
+   its right leg — which is the leg a real padlock keeps captive. The rotation
+   is about the Y axis, so the left leg travels out of the body, through the
+   viewer, and back: a door opening, not the whole lock tipping over.
+   The perspective is what makes that read as a swing rather than a squash. */
+.padlock {
+  width: 38px; height: 54px;
+  overflow: visible;
+  perspective: 220px;
+}
 
 .padlock .shackle {
   fill: none;
@@ -189,16 +189,18 @@ html, body {
   stroke-width: 2.7;
   stroke-linecap: round;
   transform-box: view-box;
-  transition: transform 420ms cubic-bezier(.3, .85, .35, 1.35), stroke 320ms;
+  /* the right leg, where it enters the body */
+  transform-origin: 17px 18px;
+  transform-style: preserve-3d;
+  transition: transform 620ms cubic-bezier(.32, .12, .28, 1), stroke 320ms;
 }
 .padlock .lockbody { fill: var(--warm); transition: fill 320ms; }
 .padlock .keyhole,
 .padlock .keyslot  { fill: #17140f; }
 
-/* unlocked: straight up, and the easing overshoots so it pops rather than
-   slides */
+/* unlocked: up out of the body, then all the way round on that leg */
 .fob.open .padlock .shackle {
-  transform: translateY(-6px);
+  transform: translateY(-6px) rotateY(180deg);
   stroke: var(--safe);
 }
 .fob.open .padlock .lockbody { fill: var(--safe); }

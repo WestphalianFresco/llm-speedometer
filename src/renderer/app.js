@@ -1316,6 +1316,8 @@ const audioBus = ctx => audioOut || ctx.destination
 function setSoundLevel (enabled, volume) {
   soundEnabled = enabled
   soundVolume = volume
+  // the recording is outside the bus, so it is set directly
+  if (snore) snore.volume = enabled ? volume : 0
   if (!audioOut) return
   const t = audioCtx.currentTime
   holdParam(audioOut.gain, t)
@@ -1589,121 +1591,46 @@ function playGrind () {
 /**
  * The snore.
  *
- * Refreshing wakes the thing up, so it complains about it. This is the AUGHHH
- * snore synthesised rather than sampled: no audio file to ship, nothing lifted
- * from someone else's upload, and nothing for the page's content policy to
- * block.
+ * A recording rather than a synthesis: sfx/snore.mp4 is the original meme sound
+ * effect. The file holds three takes back to back with silence between them, so
+ * only the first is played — in at SNORE_IN, stopped at SNORE_OUT — rather than
+ * letting the element run on through the gaps and the repeats.
  *
- * A snore is a voice, not an instrument, so it is built like one — a buzzy
- * glottal source at speaking pitch, chopped by the flutter of the soft palate,
- * pushed through three bandpass filters parked on vowel formants. Sweeping
- * those formants from "ah" toward "uh" is what makes it read as AUGHHH rather
- * than as a rude noise.
+ * It plays through a plain <audio> element instead of the Web Audio bus.
+ * Feeding a file:// media element into a MediaElementAudioSourceNode taints it
+ * and the node outputs silence, so the sound settings are applied to the
+ * element's own volume instead.
  */
-const SNORE_MS = 1450
+const SNORE_IN = 0.15
+const SNORE_OUT = 2.0
+const SNORE_MS = Math.round((SNORE_OUT - SNORE_IN) * 1000)
+
+const snore = new Audio('sfx/snore.mp4')
+snore.preload = 'auto'
+let snoreUsable = true
+let snoreTimer = null
+
+snore.addEventListener('error', () => {
+  // Nothing to be done about it at runtime, but a build that shipped without
+  // the asset should not fail in silence with no explanation.
+  snoreUsable = false
+  console.warn('snore.mp4 did not load; refresh will be silent',
+    snore.error && snore.error.message)
+})
 
 function playSnore () {
-  const ctx = getAudio()
-  if (!ctx) return
-  const t0 = ctx.currentTime
-  const peak = t0 + 0.13
-  const held = t0 + 0.78
-  const end = t0 + SNORE_MS / 1000
-
-  const master = ctx.createGain()
-  master.gain.setValueAtTime(0.0001, t0)
-  master.gain.exponentialRampToValueAtTime(0.5, peak)     // the AUGH, straight in
-  master.gain.setValueAtTime(0.5, held)
-  master.gain.exponentialRampToValueAtTime(0.0001, end)   // trailing off into hhh
-  master.connect(audioBus(ctx))
-
-  // The soft palate flapping. This is the whole difference between a snore and
-  // a groan: without the flutter it is just a vowel.
-  const flutterDepth = ctx.createGain()
-  flutterDepth.gain.value = 0.42
-  const flutter = ctx.createOscillator()
-  flutter.type = 'sine'
-  flutter.frequency.setValueAtTime(31, t0)
-  flutter.frequency.linearRampToValueAtTime(17, end)      // slows as it sags
-  flutter.connect(flutterDepth)
-  flutter.start(t0)
-  flutter.stop(end)
-
-  const throat = ctx.createGain()
-  throat.gain.value = 0.5                                 // the flutter rides on this
-  flutterDepth.connect(throat.gain)
-
-  // glottal source: pitched speech, falling the way a sleeper's does
-  const voice = ctx.createOscillator()
-  voice.type = 'sawtooth'
-  voice.frequency.setValueAtTime(152, t0)
-  voice.frequency.exponentialRampToValueAtTime(97, t0 + 0.4)
-  voice.frequency.exponentialRampToValueAtTime(72, end)
-  voice.connect(throat)
-  voice.start(t0)
-  voice.stop(end + 0.05)
-
-  // Vowel formants, swept "ah" -> "uh". These are the real first three formants
-  // of those vowels, which is why it lands as a word-ish noise rather than a
-  // filter sweep.
-  const formant = (from, to, q, level) => {
-    const bp = ctx.createBiquadFilter()
-    bp.type = 'bandpass'
-    bp.Q.value = q
-    bp.frequency.setValueAtTime(from, t0)
-    bp.frequency.linearRampToValueAtTime(to, end)
-    const gain = ctx.createGain()
-    gain.gain.value = level
-    throat.connect(bp)
-    bp.connect(gain)
-    gain.connect(master)
+  if (!snoreUsable || !soundEnabled) return
+  snore.volume = soundVolume
+  try {
+    snore.currentTime = SNORE_IN
+  } catch {
+    // seeking before metadata has arrived throws; the take starts near enough
+    // to the beginning that playing from zero is fine for one click
   }
-  formant(730, 500, 6, 1)       // F1
-  formant(1090, 980, 9, 0.5)    // F2
-  formant(2560, 2400, 8, 0.16)  // F3, the bit that stops it sounding muffled
-
-  // breath: quiet under the vowel, then the whole tail once the voice drops out
-  const breath = noiseSource(ctx, SNORE_MS / 1000 + 0.2)
-  const nose = ctx.createBiquadFilter()
-  nose.type = 'bandpass'
-  nose.Q.value = 0.8
-  nose.frequency.setValueAtTime(1500, t0)
-  nose.frequency.exponentialRampToValueAtTime(2600, end)
-  const breathGain = ctx.createGain()
-  breathGain.gain.setValueAtTime(0.0001, t0)
-  breathGain.gain.exponentialRampToValueAtTime(0.05, peak)
-  breathGain.gain.setValueAtTime(0.05, held)
-  breathGain.gain.exponentialRampToValueAtTime(0.09, end - 0.18)   // the hhh
-  breathGain.gain.exponentialRampToValueAtTime(0.0001, end)
-  // the flutter chops the breath too, or the two layers drift apart
-  flutterDepth.connect(breathGain.gain)
-  breath.connect(nose); nose.connect(breathGain); breathGain.connect(master)
-  breath.start(t0)
-  breath.stop(end + 0.05)
+  snore.play().catch(() => { /* the click was faster than the decoder */ })
+  clearTimeout(snoreTimer)
+  snoreTimer = setTimeout(() => snore.pause(), SNORE_MS)
 }
-
-/* How long one press keeps the throttle open. Pressing again inside this
-   window extends it rather than restarting a fresh blip, so leaning on the
-   button holds the engine up the way a real one stays up.
-   Net of the ~300ms it takes to climb, this is the time spent up at the top,
-   which is the part of a blip worth hearing. */
-const REV_HOLD_MS = 1150
-// After release: the needle falls, the note drops, and only then does the
-// gauge go back to reporting.
-const REV_FALL_MS = 700
-// The limiter does not hold a perfectly steady number — it bounces between
-// full scale and a little under it, which is what keeps the needle alive at
-// the top instead of pinned like a stuck gauge.
-const LIMITER_MS = 150
-// Shallow on purpose: the spring only partly follows a target this brief, so a
-// deep dip would swing the needle several degrees and flick the digits back
-// and forth across the 19k/20k rounding boundary. This flutters and holds.
-const LIMITER_DIP = 0.97
-
-let revHoldTimer = null
-let revFallTimer = null
-let revLimiterTimer = null
-let revPreTarget = 0
 
 function revEngine () {
   const alreadyUp = revActive

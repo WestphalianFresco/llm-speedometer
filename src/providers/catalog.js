@@ -30,7 +30,7 @@ const { MODEL_OPTIONS } = require('./settings')
 const PROVIDERS = [
   {
     id: 'anthropic',
-    emoji: '✳️',
+    emoji: '✴️',
     name: 'Anthropic',
     product: 'Claude Code',
     accent: '#D97757',

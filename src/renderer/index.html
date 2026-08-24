@@ -6,10 +6,12 @@
        every kind of fetch; base-uri and form-action are the two directives it
        does NOT cover, so they are stated rather than left open. frame-ancestors
        is deliberately absent: it is ignored when delivered in a meta element,
-       and this window cannot be framed by anything in the first place. -->
+       and this window cannot be framed by anything in the first place.
+       media-src 'self' is what lets the sound effect in sfx/ load; without it
+       the element fails with "Media load rejected by URL safety check". -->
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none'; style-src 'self'; script-src 'self';
-                 base-uri 'none'; form-action 'none'">
+                 media-src 'self'; base-uri 'none'; form-action 'none'">
   <title>LLM Speedometer</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -22,7 +24,6 @@
       <button class="ctl ctl-close lock-close" id="lock-close" title="Close">&#10005;</button>
       <div class="fob" id="fob">
         <div class="fob-top">
-          <span class="fob-brand">LLM</span>
           <span class="fob-led" id="fob-led"></span>
         </div>
         <button class="fob-btn" id="fob-unlock" title="Press to unlock">
