@@ -274,29 +274,6 @@ html, body {
   color: var(--faint);
 }
 
-.vendors { display: flex; gap: 5px; flex-wrap: wrap; justify-content: center; }
-
-.vendor {
-  -webkit-app-region: no-drag;
-  display: flex; align-items: center; gap: 5px;
-  padding: 4px 9px;
-  border-radius: 999px;
-  border: 1px solid var(--edge);
-  background: transparent;
-  color: var(--muted);
-  font-family: var(--font);
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-medium);
-  cursor: pointer;
-  transition: background 130ms, color 130ms, border-color 130ms;
-}
-.vendor:hover { background: var(--edge); color: var(--ink); }
-.vendor.selected { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
-
-.vendor-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--dim); flex: none; }
-.vendor-dot.ready { background: var(--safe); }
-.vendor-dot.seen  { background: var(--warm); }
-
 .lock-status {
   max-width: 100%;
   text-align: center;
@@ -594,45 +571,6 @@ body.mini .settings { display: none; }
 }
 .gearbox[hidden] { display: none; }
 
-/* the make selector: one chip per provider, its mark in the provider's accent */
-.gb-makes {
-  flex: none;
-  display: flex;
-  gap: 4px;
-  overflow-x: auto;
-  padding: 8px 13px 7px;
-  border-bottom: 1px solid var(--edge);
-  scrollbar-width: none;
-}
-.gb-makes::-webkit-scrollbar { display: none; }
-/* the rail scrolls past the edge — fade the last chip out so that reads as
-   "more this way" rather than as a clipped layout */
-.gb-makes {
-  -webkit-mask-image: linear-gradient(90deg, #000 0, #000 88%, transparent 100%);
-  mask-image: linear-gradient(90deg, #000 0, #000 88%, transparent 100%);
-}
-
-.gb-make {
-  flex: none;
-  display: flex; align-items: center; gap: 5px;
-  padding: 4px 8px 4px 5px;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  background: var(--edge);
-  color: var(--muted);
-  font-family: var(--font);
-  font-size: var(--fs-xs);
-  cursor: pointer;
-  transition: color 120ms, border-color 120ms, background 120ms;
-}
-.gb-make:hover { color: var(--ink); }
-.gb-make.on {
-  color: var(--ink);
-  border-color: color-mix(in srgb, var(--make) 60%, transparent);
-  background: color-mix(in srgb, var(--make) 16%, transparent);
-}
-.gb-make svg { width: 13px; height: 13px; color: var(--make); flex: none; }
-
 /* the footwell: pedal on the left, gate on the right, as in a car */
 .gb-floor {
   flex: 1 1 auto;
@@ -777,6 +715,139 @@ body.mini .settings { display: none; }
 }
 
 body.mini .gearbox { display: none; }
+
+/* ---------- provider picker ----------
+
+   Used in two places and styled once: the landing screen, where it chooses
+   which provider to meter, and the gearbox, where it chooses whose models are
+   in the gate. Both show exactly one provider — the one in use — with arrows
+   to step through the rest. */
+
+.picker {
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.picker-arrow {
+  flex: none;
+  width: 22px; height: 22px;
+  padding: 0;
+  border: 0; border-radius: 7px;
+  background: transparent;
+  color: var(--faint);
+  font-family: var(--font);
+  font-size: var(--fs-lg);
+  line-height: 1;
+  cursor: pointer;
+  transition: background 120ms, color 120ms;
+}
+.picker-arrow:hover  { background: var(--edge); color: var(--ink); }
+.picker-arrow:active { transform: translateY(1px); }
+
+.picker-face {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  min-width: 118px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--make, var(--edge)) 55%, transparent);
+  background: color-mix(in srgb, var(--make, var(--ink)) 12%, transparent);
+}
+
+/* Emoji come from the system's colour font, which has its own metrics — a
+   slightly smaller size lines them up with the label beside them. */
+.picker-mark {
+  font-size: var(--fs-lg);
+  line-height: 1;
+}
+.picker-name {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.picker-dots {
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  height: 10px;
+}
+.picker-dot {
+  -webkit-app-region: no-drag;
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--dim);
+  cursor: pointer;
+  transition: background 160ms, transform 160ms;
+}
+/* a provider whose CLI is signed in and readable */
+.picker-dot.ready { background: color-mix(in srgb, var(--safe) 70%, transparent); }
+/* installed but with nothing to read yet */
+.picker-dot.seen  { background: color-mix(in srgb, var(--warm) 60%, transparent); }
+.picker-dot.on    { transform: scale(1.6); background: var(--accent); }
+
+/* the gearbox's copy sits in the panel's own header strip */
+.gb-picker {
+  flex: none;
+  padding: 8px 13px 7px;
+  border-bottom: 1px solid var(--edge);
+}
+
+/* ---------- gearbox hint ---------- */
+
+.gb-hint {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px;
+  animation: lock-in 160ms ease-out;
+}
+.gb-hint[hidden] { display: none; }
+
+.gb-hint-card {
+  width: 100%;
+  padding: 13px 15px 12px;
+  border-radius: 13px;
+  background: var(--bg);
+  border: 1px solid var(--edge);
+  box-shadow: 0 10px 26px var(--shadow);
+}
+.gb-hint-card h4 {
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--ls-caps);
+  color: var(--faint);
+  margin-bottom: 7px;
+}
+.gb-hint-card ol {
+  margin: 0 0 7px 15px;
+  padding: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--ink);
+}
+.gb-hint-card li { margin-bottom: 2px; }
+.gb-hint-card b  { font-weight: var(--fw-medium); }
+.gb-hint-card p  {
+  font-size: var(--fs-micro);
+  color: var(--faint);
+  margin-bottom: 9px;
+}
+.gb-hint-card kbd {
+  font-family: var(--font);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-bold);
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--edge);
+  background: var(--edge);
+}
+
+.set-head-controls { display: flex; align-items: center; gap: 2px; }
 
 /* ---------- settings ---------- */
 

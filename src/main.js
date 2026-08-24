@@ -39,7 +39,9 @@ const DEFAULT_SETTINGS = {
   openAtLogin: false,
   sound: true,
   volume: 0.8,            // 0 .. 1
-  showSessions: true
+  showSessions: true,
+  // the gearbox explains itself once, then stops
+  gearboxHintSeen: false
 }
 
 // What the shifter is currently in, and what it was in before — Reverse drops
@@ -114,6 +116,7 @@ function coerceSetting (key, value) {
     case 'openAtLogin':
     case 'sound':
     case 'showSessions':
+    case 'gearboxHintSeen':
       return Boolean(value)
     default:
       return undefined

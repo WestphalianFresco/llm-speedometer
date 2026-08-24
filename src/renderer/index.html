@@ -37,7 +37,17 @@
       </div>
 
       <div class="lock-title">SELECT PROVIDER</div>
-      <div class="vendors" id="vendors"></div>
+      <!-- One at a time, stepped through with the arrows, rather than a row of
+           every provider at once. -->
+      <div class="picker" id="vendors">
+        <button class="picker-arrow" id="vendor-prev" title="Previous provider">&#8249;</button>
+        <div class="picker-face">
+          <span class="picker-mark" id="vendor-mark"></span>
+          <span class="picker-name" id="vendor-name">&#8212;</span>
+        </div>
+        <button class="picker-arrow" id="vendor-next" title="Next provider">&#8250;</button>
+      </div>
+      <div class="picker-dots" id="vendor-dots"></div>
       <div class="lock-status" id="lock-status">&#8212;</div>
       <button class="lock-open" id="lock-open" hidden>Open sign-in page &#8599;</button>
     </div>
@@ -179,10 +189,20 @@
     <div class="gearbox" id="gearbox" hidden>
       <div class="set-head">
         <span class="set-title">GEARBOX</span>
-        <button class="ctl" id="gb-close" title="Back">&#10005;</button>
+        <span class="set-head-controls">
+          <button class="ctl" id="gb-help" title="How to shift">?</button>
+          <button class="ctl" id="gb-close" title="Back">&#10005;</button>
+        </span>
       </div>
 
-      <div class="gb-makes" id="gb-makes"></div>
+      <div class="picker gb-picker" id="gb-makes">
+        <button class="picker-arrow" id="gb-prev" title="Previous make">&#8249;</button>
+        <div class="picker-face">
+          <span class="picker-mark" id="gb-make-mark"></span>
+          <span class="picker-name" id="gb-make-name">&#8212;</span>
+        </div>
+        <button class="picker-arrow" id="gb-next" title="Next make">&#8250;</button>
+      </div>
 
       <div class="gb-floor">
         <!-- clutch pedal -->
@@ -223,6 +243,25 @@
         <span class="gb-status" id="gb-status">Hold the clutch to shift.</span>
       </div>
       <p class="gb-note" id="gb-note"></p>
+
+      <!-- Shown the first time the gearbox is opened, and never again unless
+           the ? is pressed. A clutch is not a control anyone should have to
+           guess at, but it is also not worth explaining twice. -->
+      <div class="gb-hint" id="gb-hint" hidden>
+        <div class="gb-hint-card">
+          <h4>Shifting</h4>
+          <ol>
+            <li><b>Click the clutch pedal.</b> It stays down &mdash; or hold
+              <kbd>Space</kbd> to work it like a real one.</li>
+            <li><b>Drag the lever</b> up its slot, across the middle, and down
+              into the gear you want. It will not cut the corner.</li>
+            <li><b>Click the pedal again.</b> The gear takes as the pedal
+              comes up.</li>
+          </ol>
+          <p>Try to shift with the clutch up and it grinds, as it should.</p>
+          <button class="set-btn" id="gb-hint-ok">Got it</button>
+        </div>
+      </div>
     </div>
 
     <div class="header">

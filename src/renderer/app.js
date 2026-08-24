@@ -26,6 +26,9 @@ const nodes = {
   fob: el('fob'),
   fobLabel: el('fob-label'),
   vendors: el('vendors'),
+  vendorMark: el('vendor-mark'),
+  vendorName: el('vendor-name'),
+  vendorDots: el('vendor-dots'),
   lockStatus: el('lock-status'),
   lockOpen: el('lock-open'),
   odoTotal: el('odo-total'),
@@ -420,14 +423,178 @@ requestAnimationFrame(frame)
 
 // ---------- personality ----------
 
-const MOODS = [
-  { max: 50, face: '( ˶ˆ ᗜ ˆ˵ )', text: 'Feeling great!', cls: '' },
-  { max: 75, face: '( ˶• ᴗ •˵ )', text: 'Pacing myself~', cls: '' },
-  { max: 90, face: '( ｡•́ - •̀｡ )', text: 'Getting a bit tight…', cls: '' },
-  { max: Infinity, face: '( ; ᵕ ; )', text: 'Almost out! Go easy!', cls: 'panic' }
-]
-const MOOD_UNKNOWN = { face: '( ˘ ω ˘ )', text: 'Still getting to know you…', cls: 'sleep' }
-const MOOD_THROTTLED = { face: '( -ω- ) zZ', text: 'API throttled — local estimate', cls: 'sleep' }
+/**
+ * The mascot.
+ *
+ * It has a state, and each state has a bagful of faces rather than one. Which
+ * face you get is chosen at random and held for a while, so glancing at the
+ * widget twice does not give you the same picture twice — the way a desk toy
+ * with a handful of frames feels alive without animating.
+ *
+ * State comes from what the app already knows: whether tokens are moving right
+ * now, and how much of the window is left. Nothing here is decorative in the
+ * sense of being made up — asleep really does mean nothing has been generated
+ * for the whole rate window.
+ */
+const MOOD_FACES = {
+  // nothing generated for the length of the rate window
+  asleep: [
+    '( ˘ω˘ ) zZ',
+    '( ˘ ﻌ ˘ ) zZ',
+    '( -ω- ) zZ',
+    '( ˘_˘ ) zZ',
+    '( ᴗ_ᴗ ) 💤',
+    '( ﹏ ) zZ'
+  ],
+  // poked awake
+  waking: [
+    '( ⊙ o ⊙ )',
+    '( º ﹏ º )',
+    '( •o• )!',
+    '( ˚ o ˚ )',
+    '( ⊙_⊙ )?'
+  ],
+  // tokens are moving
+  working: [
+    '( •̀ ᴗ •́ )',
+    '( ˶ ˃ ᗜ ˂ ˶ )',
+    '( ｀ ω ´ )',
+    '( ｀_´ )',
+    '( •̀_•́ )',
+    '( ˘ ³˘ )',
+    '( ✧ ω ✧ )'
+  ],
+  // idle but awake, plenty left
+  cruise: [
+    '( ˶ˆ ᗜ ˆ˵ )',
+    '( ˶• ᴗ •˵ )',
+    '( ᵔ ᴗ ᵔ )',
+    '( ˘ ᗜ ˘ )',
+    '( ・ ω ・ )',
+    '( ｡ ᵕ ｡ )'
+  ],
+  // three quarters gone
+  tight: [
+    '( ｡•́ - •̀｡ )',
+    '( ˘ ︿ ˘ )',
+    '( ・_・; )',
+    '( ｡ ﾉ ω ＼ ｡ )',
+    '( ˃ ᵕ ˂ ；)'
+  ],
+  // nearly out
+  critical: [
+    '( ; ᵕ ; )',
+    '( ; ω ; )',
+    '( ⌣́_⌣̀ )',
+    '( ; ﹏ ; )',
+    '( ｡ ; ﹏ ; ｡ )'
+  ],
+  // the API is refusing us and the numbers are local guesses
+  throttled: [
+    '( -ω- ) zZ',
+    '( ˘ ~ ˘ ) …',
+    '( ¬ ω ¬ )'
+  ],
+  // no reading yet
+  unknown: [
+    '( ˘ ω ˘ )',
+    '( ・ ・ ? )',
+    '( ˘ ? ˘ )'
+  ]
+}
+
+const MOOD_TEXT = {
+  asleep: 'Asleep — nothing running',
+  waking: 'Oh! I am up, I am up',
+  working: 'Working',
+  cruise: 'Plenty in the tank',
+  tight: 'Getting a bit tight…',
+  critical: 'Almost out! Go easy!',
+  throttled: 'API throttled — local estimate',
+  unknown: 'Still getting to know you…'
+}
+
+// Which states read as "eyes shut" for styling, and which as alarm.
+const MOOD_CLASS = { asleep: 'sleep', throttled: 'sleep', critical: 'panic' }
+
+// A face is held this long before another is drawn from the same bag. Long
+// enough that it is never a flicker, short enough that you catch it changing.
+const FACE_HOLD_MS = 11000
+// How long being poked awake lasts before the real state takes over again.
+const WAKE_MS = 3200
+// Below this the needle is not really moving; the rate window is ten minutes,
+// so zero here means nothing has been generated in that whole time.
+const WORKING_TOK_MIN = 1
+
+let moodState = null
+let moodFace = null
+let moodShownAt = 0
+let wakeUntil = 0
+
+/** Pick a face from a bag, avoiding the one already on screen. */
+function pickFace (state) {
+  const bag = MOOD_FACES[state] || MOOD_FACES.unknown
+  if (bag.length === 1) return bag[0]
+  let face = moodFace
+  while (face === moodFace) face = bag[Math.floor(Math.random() * bag.length)]
+  return face
+}
+
+/** What the mascot should be feeling, from the numbers alone. */
+function moodStateFor (data) {
+  if (Date.now() < wakeUntil) return 'waking'
+
+  const known = [data.fiveHour.percent, data.sevenDay.percent].filter(p => p !== null)
+  const worst = known.length ? Math.max.apply(null, known) : null
+
+  if (worst !== null && worst >= 90) return 'critical'
+  if (data.official && data.official.backingOff && data.fiveHour.source === 'local') {
+    return 'throttled'
+  }
+  if (worst === null) return 'unknown'
+  if ((data.tokensPerMinute || 0) < WORKING_TOK_MIN) return 'asleep'
+  if (worst >= 75) return 'tight'
+  if ((data.tokensPerMinute || 0) >= WORKING_TOK_MIN) return 'working'
+  return 'cruise'
+}
+
+function renderMood (data) {
+  const state = moodStateFor(data)
+  const now = Date.now()
+
+  // A new state redraws at once; the same state redraws when its face has been
+  // up long enough, so the mascot keeps changing while nothing else does.
+  if (state !== moodState || now - moodShownAt > FACE_HOLD_MS) {
+    moodState = state
+    moodFace = pickFace(state)
+    moodShownAt = now
+  }
+
+  nodes.mascot.textContent = moodFace
+  nodes.mascot.title = MOOD_TEXT[state] || ''
+  // a poll landing mid-hop must not cancel the hop
+  const hopping = nodes.mascot.classList.contains('boing')
+  nodes.mascot.className = 'mascot ' + (MOOD_CLASS[state] || '') + (hopping ? ' boing' : '')
+}
+
+/** Poking it wakes it up, and it stays startled for a moment. */
+function wakeMascot () {
+  const wasAsleep = moodState === 'asleep' || moodState === 'throttled'
+  if (wasAsleep) {
+    wakeUntil = Date.now() + WAKE_MS
+    moodState = null          // force a redraw into the waking bag
+    if (latest) renderMood(latest)
+    return
+  }
+  // already awake: just pull a different face out of the current bag
+  moodFace = pickFace(moodState || 'cruise')
+  moodShownAt = Date.now()
+  nodes.mascot.textContent = moodFace
+}
+
+// While asleep or startled nothing else is repainting, so the face is kept
+// turning here rather than waiting for the next poll.
+setInterval(() => { if (latest) renderMood(latest) }, 2000)
 
 function formatRate (perMin) {
   if (perMin >= 10000) return Math.round(perMin / 1000) + 'k'
@@ -588,19 +755,7 @@ function render (data) {
   renderTank('tank5h', data.fiveHour)
   renderTank('tankWeek', data.sevenDay)
 
-  const known = [data.fiveHour.percent, data.sevenDay.percent].filter(p => p !== null)
-  const worst = known.length ? Math.max.apply(null, known) : null
-
-  let mood
-  if (worst === null) mood = MOOD_UNKNOWN
-  else if (data.official.backingOff && data.fiveHour.source === 'local') mood = MOOD_THROTTLED
-  else mood = MOODS.find(m => worst < m.max)
-
-  nodes.mascot.textContent = mood.face
-  nodes.mascot.title = mood.text
-  // a poll landing mid-hop must not cancel the hop
-  const hopping = nodes.mascot.classList.contains('boing')
-  nodes.mascot.className = 'mascot ' + mood.cls + (hopping ? ' boing' : '')
+  renderMood(data)
 
   nodes.miniPct.textContent = data.fiveHour.percent === null
     ? '--'
@@ -776,6 +931,7 @@ function renderTasks (data) {
  */
 
 let selectedVendor = null
+let vendorList = []
 let vendorsBuilt = false
 
 /** Flash the lamp without disturbing the colour it rests at. */
@@ -837,31 +993,34 @@ function canOfferSignIn (v) {
 
 function selectVendor (v) {
   selectedVendor = v
-  for (const btn of nodes.vendors.querySelectorAll('.vendor')) {
-    btn.classList.toggle('selected', btn.dataset.vendor === v.id)
+  const index = vendorList.findIndex(x => x.id === v.id)
+  nodes.vendorMark.textContent = emojiFor(v.id)
+  nodes.vendorName.textContent = v.name
+  for (const [i, dot] of [...nodes.vendorDots.children].entries()) {
+    dot.classList.toggle('on', i === index)
   }
   nodes.lockStatus.textContent = describeVendor(v)
   nodes.lockOpen.toggleAttribute('hidden', !canOfferSignIn(v))
 }
 
+/** Step the picker along, wrapping at both ends. */
+function stepVendor (by) {
+  if (vendorList.length < 2) return
+  const index = vendorList.findIndex(v => v.id === (selectedVendor || {}).id)
+  const next = (index + by + vendorList.length) % vendorList.length
+  selectVendor(vendorList[next])
+}
+
 function buildVendors (vendors) {
-  nodes.vendors.textContent = ''
+  vendorList = vendors
+  // One dot per provider, so it is obvious there are others to step to.
+  nodes.vendorDots.textContent = ''
   for (const v of vendors) {
-    const btn = document.createElement('button')
-    btn.className = 'vendor'
-    btn.dataset.vendor = v.id
-
     const dot = document.createElement('span')
-    dot.className = 'vendor-dot ' + (v.usable ? 'ready' : v.present ? 'seen' : '')
-    btn.appendChild(dot)
-
-    const label = document.createElement('span')
-    label.textContent = v.name
-    btn.appendChild(label)
-
-    btn.title = v.product + ' — ' + v.note
-    btn.addEventListener('click', () => selectVendor(v))
-    nodes.vendors.appendChild(btn)
+    dot.className = 'picker-dot ' + (v.usable ? 'ready' : v.present ? 'seen' : '')
+    dot.title = v.name + ' — ' + v.note
+    dot.addEventListener('click', () => selectVendor(v))
+    nodes.vendorDots.appendChild(dot)
   }
   vendorsBuilt = true
 
@@ -1609,45 +1768,27 @@ function revRelease () {
  * the only thing that decides what, if anything, gets written.
  */
 
-// Marks for each provider. Drawn here as plain geometry rather than shipped as
-// image assets: the page's content policy forbids remote loads, and these are
-// deliberately original shapes rather than reproductions of company logos.
-const MAKE_MARKS = {
-  anthropic: [['path', { d: 'M8 2 L3.2 14 M8 2 L12.8 14 M5.4 10.4 H10.6' }]],
-  openai: [['path', { d: 'M8 2 L13.2 5 V11 L8 14 L2.8 11 V5 Z' }]],
-  google: [['path', { d: 'M13 5.2 A6 6 0 1 0 14 8 H8' }]],
-  xai: [['path', { d: 'M3.2 3.2 L12.8 12.8 M12.8 3.2 L3.2 12.8' }]],
-  meta: [['circle', { cx: 5.8, cy: 8, r: 3.6 }], ['circle', { cx: 10.2, cy: 8, r: 3.6 }]],
-  mistral: [['path', { d: 'M3 4.5 H13 M3 7.2 H10 M3 9.9 H13 M3 12.6 H7' }]],
-  deepseek: [['path', { d: 'M2.4 9.6 Q5.2 5.2 8 9.6 T13.6 9.6' }]],
-  cohere: [['path', { d: 'M3.4 12.6 A6.5 6.5 0 0 1 12.6 3.4' }],
-    ['path', { d: 'M6.2 12.2 A4 4 0 0 1 12.2 6.2' }]]
-}
-
-function makeMark (id) {
-  const svg = svgEl('svg', { viewBox: '0 0 16 16' })
-  // hasOwn, not a bare lookup: an id of "constructor" or "__proto__" would
-  // otherwise reach Object.prototype and hand back something un-iterable
-  const parts = Object.hasOwn(MAKE_MARKS, id) ? MAKE_MARKS[id] : MAKE_MARKS.anthropic
-  for (const [tag, attrs] of parts) {
-    svg.appendChild(svgEl(tag, {
-      ...attrs,
-      fill: 'none',
-      stroke: 'currentColor',
-      'stroke-width': 1.6,
-      'stroke-linecap': 'round',
-      'stroke-linejoin': 'round'
-    }))
-  }
-  return svg
-}
-
+// A provider accent goes into a CSS custom property, so it is confirmed to be
+// a plain hex colour first.
 const HEX_COLOR = /^#[0-9a-f]{3,8}$/i
+
+/** The provider's emoji, from whichever catalogue entry matches. */
+function emojiFor (id) {
+  const found = gbCatalog.find(p => p.id === id)
+  return found && found.emoji ? found.emoji : '\u2022'
+}
 
 const gbNodes = {
   panel: el('gearbox'),
   close: el('gb-close'),
+  help: el('gb-help'),
+  hint: el('gb-hint'),
+  hintOk: el('gb-hint-ok'),
   makes: el('gb-makes'),
+  makeMark: el('gb-make-mark'),
+  makeName: el('gb-make-name'),
+  prev: el('gb-prev'),
+  next: el('gb-next'),
   pedal: el('gb-pedal'),
   gate: el('gb-gate'),
   lamp: el('gb-lamp'),
@@ -1662,7 +1803,19 @@ const SLOT_TOP = 52
 const SLOT_BOTTOM = 158
 const SLOT_GAP = 70
 const DETENT_R = 22      // how close to a gear counts as being in it
-const RAIL_GRAB = 9      // how far off the rail before a slot takes the lever
+/*
+ * Two thresholds, not one, and this matters more than it looks.
+ *
+ * Leaving a slot for the rail happens close in (RAIL_EXIT); being taken BY a
+ * slot needs a decisive pull away from it (SLOT_ENTER). The gap between them is
+ * the band you can travel across the rail in. Sharing a single threshold left
+ * that band 9 units wide — about fifteen screen pixels — so any wobble while
+ * moving sideways dropped the lever straight back into a slot, and the lever
+ * could not be moved horizontally at all.
+ */
+const RAIL_EXIT = 14     // this close to the rail and the slot lets go
+const SLOT_ENTER = 30    // this far off it before a slot takes hold
+const SLOT_SNAP = 22     // ...and only near that slot's mouth
 const BITE_MS = 190      // clutch travel before it takes drive
 
 let gbCatalog = []
@@ -1804,30 +1957,38 @@ function markEngaged () {
  * two at a crossing. This is the whole feel of an H-pattern: you cannot cut the
  * corner from 1st to 2nd, you go up, across, and down.
  */
+/** Is there a gear at this slot's top or bottom end? */
+const legExists = (slotX, down) =>
+  gbPositions.some(p => p.x === slotX && p.y === (down ? SLOT_BOTTOM : SLOT_TOP))
+
+/** Keep a position inside the legs that this slot actually has. */
+const clampSlot = (slotX, py) => Math.min(
+  legExists(slotX, true) ? SLOT_BOTTOM : RAIL_Y,
+  Math.max(legExists(slotX, false) ? SLOT_TOP : RAIL_Y, py))
+
 function constrain (px, py) {
   const first = gbSlots[0]
   const last = gbSlots[gbSlots.length - 1]
+  const off = py - RAIL_Y
 
   if (lever.lane === null) {
     const x = Math.min(last, Math.max(first, px))
-    // pulling away from the rail near a slot drops the lever into it
-    if (Math.abs(py - RAIL_Y) > RAIL_GRAB) {
-      const near = gbSlots.findIndex(sx => Math.abs(sx - x) < SLOT_GAP / 2)
-      if (near !== -1) {
+    // A slot takes the lever only on a decisive pull away from the rail, near
+    // that slot's mouth, and only if there is a leg to pull into.
+    if (Math.abs(off) > SLOT_ENTER) {
+      const near = gbSlots.findIndex(sx => Math.abs(sx - x) < SLOT_SNAP)
+      if (near !== -1 && legExists(gbSlots[near], off > 0)) {
         lever.lane = near
-        return { x: gbSlots[near], y: Math.min(SLOT_BOTTOM, Math.max(SLOT_TOP, py)) }
+        return { x: gbSlots[near], y: clampSlot(gbSlots[near], py) }
       }
     }
     return { x: x, y: RAIL_Y }
   }
 
   const slotX = gbSlots[lever.lane]
-  const hasTop = gbPositions.some(p => p.x === slotX && p.y === SLOT_TOP)
-  const hasBottom = gbPositions.some(p => p.x === slotX && p.y === SLOT_BOTTOM)
-  const y = Math.min(hasBottom ? SLOT_BOTTOM : RAIL_Y,
-    Math.max(hasTop ? SLOT_TOP : RAIL_Y, py))
+  const y = clampSlot(slotX, py)
   // back at the rail, the lever is free to travel across it again
-  if (Math.abs(y - RAIL_Y) < RAIL_GRAB) {
+  if (Math.abs(y - RAIL_Y) < RAIL_EXIT) {
     lever.lane = null
     return { x: slotX, y: RAIL_Y }
   }
@@ -1937,9 +2098,7 @@ async function engageGear (gear) {
   // the shifter rather than leaving it marked on a plate it is not in.
   if (gbState.providerId !== gbProviderId) {
     gbProviderId = gbState.providerId
-    for (const chip of gbNodes.makes.children) {
-      chip.classList.toggle('on', chip.dataset.make === gbProviderId)
-    }
+    paintMake()
     buildGate()
   }
   markEngaged()
@@ -1959,34 +2118,35 @@ function gearFailure (result) {
   return 'Refused: ' + reason
 }
 
-function buildMakes () {
-  gbNodes.makes.textContent = ''
-  for (const provider of gbCatalog) {
-    const chip = document.createElement('button')
-    chip.className = 'gb-make'
-    chip.dataset.make = provider.id
-    // Straight into a custom property, so it is confirmed to be a plain hex
-    // colour first — a value carrying its own semicolon would otherwise be able
-    // to append declarations of its choosing.
-    chip.style.setProperty('--make', HEX_COLOR.test(provider.accent || '')
-      ? provider.accent
-      : 'var(--muted)')
-    chip.title = provider.product + ' — ' + (provider.configurable
-      ? 'this dashboard can set its model'
-      : 'listed only; this dashboard cannot set its model')
-    chip.appendChild(makeMark(provider.id))
-    const label = document.createElement('span')
-    label.textContent = provider.name
-    chip.appendChild(label)
-    chip.addEventListener('click', () => selectMake(provider.id))
-    gbNodes.makes.appendChild(chip)
-  }
+/** Show the make the box is currently set up for, and nothing else. */
+function paintMake () {
+  const provider = gbProvider()
+  if (!provider) return
+  gbNodes.makeMark.textContent = provider.emoji || '\u2022'
+  gbNodes.makeName.textContent = provider.name
+  // Straight into a custom property, so it is confirmed to be a plain hex
+  // colour first — a value carrying its own semicolon would otherwise be able
+  // to append declarations of its choosing.
+  gbNodes.makes.style.setProperty('--make', HEX_COLOR.test(provider.accent || '')
+    ? provider.accent
+    : 'var(--muted)')
+  gbNodes.makes.title = provider.product + ' \u2014 ' + (provider.configurable
+    ? 'this dashboard can set its model'
+    : 'listed only; this dashboard cannot set its model')
+}
+
+/** Step to the next make, wrapping at both ends. */
+function stepMake (by) {
+  if (gbCatalog.length < 2) return
+  const index = gbCatalog.findIndex(p => p.id === gbProviderId)
+  const next = (index + by + gbCatalog.length) % gbCatalog.length
+  selectMake(gbCatalog[next].id)
 }
 
 function selectMake (id) {
   if (gbProviderId === id) return
   gbProviderId = id
-  for (const chip of gbNodes.makes.children) chip.classList.toggle('on', chip.dataset.make === id)
+  paintMake()
   buildGate()
   const provider = gbProvider()
   gbNodes.note.textContent = provider ? provider.note || '' : ''
@@ -2003,19 +2163,17 @@ function renderGearbox (data) {
   gbState = data.gearbox || gbState
   if (first || !gbProviderId) gbProviderId = gbState.providerId || gbCatalog[0].id
 
-  if (first) {
-    buildMakes()
-    buildGate()
-  }
-  for (const chip of gbNodes.makes.children) {
-    chip.classList.toggle('on', chip.dataset.make === gbProviderId)
-  }
+  if (first) buildGate()
+  paintMake()
   markEngaged()
 }
 
 function openGearbox () {
   if (latest) renderGearbox(latest)
   gbNodes.panel.removeAttribute('hidden')
+  // First time through, say how a clutch works. After that, never again.
+  const seen = latest && latest.settings && latest.settings.gearboxHintSeen
+  gbNodes.hint.toggleAttribute('hidden', Boolean(seen))
   const provider = gbProvider()
   gbNodes.note.textContent = provider ? provider.note || '' : ''
   setGearStatus('Click the clutch pedal to shift (or hold Space).', gbState.gear !== null ? 'engaged' : null)
@@ -2085,6 +2243,20 @@ window.addEventListener('blur', () => {
 
 el('btn-gearbox').addEventListener('click', openGearbox)
 gbNodes.close.addEventListener('click', closeGearbox)
+gbNodes.prev.addEventListener('click', () => stepMake(-1))
+gbNodes.next.addEventListener('click', () => stepMake(1))
+
+// ---- the one-time explanation ----
+
+const showHint = () => gbNodes.hint.removeAttribute('hidden')
+
+gbNodes.help.addEventListener('click', showHint)
+gbNodes.hintOk.addEventListener('click', () => {
+  gbNodes.hint.setAttribute('hidden', '')
+  // Recorded in settings, so it is explained once per person rather than once
+  // per launch.
+  saveSetting('gearboxHintSeen', true)
+})
 
 // ---------- settings ----------
 
@@ -2261,6 +2433,7 @@ nodes.mascot.addEventListener('click', () => {
   nodes.mascot.classList.remove('boing')
   void nodes.mascot.offsetWidth
   nodes.mascot.classList.add('boing')
+  wakeMascot()
 })
 nodes.mascot.addEventListener('animationend', e => {
   if (e.animationName === 'boing') nodes.mascot.classList.remove('boing')
@@ -2281,6 +2454,8 @@ el('btn-refresh').addEventListener('click', e => {
   playSnore()
   window.meter.refresh()
 })
+el('vendor-prev').addEventListener('click', () => stepVendor(-1))
+el('vendor-next').addEventListener('click', () => stepVendor(1))
 el('btn-lock').addEventListener('click', () => window.meter.lock())
 el('btn-close').addEventListener('click', () => window.meter.close())
 el('lock-close').addEventListener('click', () => window.meter.close())

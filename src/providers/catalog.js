@@ -18,6 +18,10 @@ const { MODEL_OPTIONS } = require('./settings')
  * cannot reconfigure a CLI it does not own, and pretending otherwise would be
  * worse than saying so.
  *
+ * The emoji is the provider's face in the picker: evocative of each house
+ * rather than a reproduction of anyone's logo, and it needs no asset, no font
+ * and no network.
+ *
  * Gear order follows a gearbox, not a price list: 1st is the heaviest, highest
  * torque model and top gear is the light one you cruise in. Reverse is not a
  * model at all — it drops back to whatever was engaged before.
@@ -26,6 +30,7 @@ const { MODEL_OPTIONS } = require('./settings')
 const PROVIDERS = [
   {
     id: 'anthropic',
+    emoji: '✳️',
     name: 'Anthropic',
     product: 'Claude Code',
     accent: '#D97757',
@@ -44,6 +49,7 @@ const PROVIDERS = [
   },
   {
     id: 'openai',
+    emoji: '🌀',
     name: 'OpenAI',
     product: 'Codex CLI',
     accent: '#10A37F',
@@ -60,6 +66,7 @@ const PROVIDERS = [
   },
   {
     id: 'google',
+    emoji: '✨',
     name: 'Google',
     product: 'Gemini CLI',
     accent: '#4285F4',
@@ -75,6 +82,7 @@ const PROVIDERS = [
   },
   {
     id: 'xai',
+    emoji: '✖️',
     name: 'xAI',
     product: 'Grok',
     accent: '#8E8E93',
@@ -88,6 +96,7 @@ const PROVIDERS = [
   },
   {
     id: 'meta',
+    emoji: '♾️',
     name: 'Meta',
     product: 'Llama',
     accent: '#0866FF',
@@ -101,6 +110,7 @@ const PROVIDERS = [
   },
   {
     id: 'mistral',
+    emoji: '🌬️',
     name: 'Mistral',
     product: 'Le Chat',
     accent: '#FA520F',
@@ -114,6 +124,7 @@ const PROVIDERS = [
   },
   {
     id: 'deepseek',
+    emoji: '🐋',
     name: 'DeepSeek',
     product: 'DeepSeek',
     accent: '#4D6BFE',
@@ -126,6 +137,7 @@ const PROVIDERS = [
   },
   {
     id: 'cohere',
+    emoji: '🔗',
     name: 'Cohere',
     product: 'Command',
     accent: '#39594D',
