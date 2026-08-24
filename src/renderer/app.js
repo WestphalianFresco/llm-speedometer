@@ -1605,31 +1605,45 @@ const SNORE_IN = 0.15
 const SNORE_OUT = 2.0
 const SNORE_MS = Math.round((SNORE_OUT - SNORE_IN) * 1000)
 
-const snore = new Audio('sfx/snore.mp4')
-snore.preload = 'auto'
-let snoreUsable = true
+let snore = null
 let snoreTimer = null
 
-snore.addEventListener('error', () => {
-  // Nothing to be done about it at runtime, but a build that shipped without
-  // the asset should not fail in silence with no explanation.
-  snoreUsable = false
-  console.warn('snore.mp4 did not load; refresh will be silent',
-    snore.error && snore.error.message)
-})
+/**
+ * Built on first use, not at load.
+ *
+ * Creating it up front raced the audio output coming up and produced an
+ * AUDIO_RENDERER_ERROR on some launches — which is a transient condition, not a
+ * missing file. So a failure drops the element rather than setting a flag: the
+ * next press builds a fresh one and tries again, instead of one bad moment at
+ * startup silencing the app for the rest of the session.
+ */
+function snoreElement () {
+  if (snore) return snore
+  const el = new Audio('sfx/snore.mp4')
+  el.preload = 'auto'
+  el.volume = soundEnabled ? soundVolume : 0
+  el.addEventListener('error', () => {
+    console.warn('snore.mp4 failed, will retry on the next press:',
+      el.error && el.error.message)
+    if (snore === el) snore = null
+  })
+  snore = el
+  return el
+}
 
 function playSnore () {
-  if (!snoreUsable || !soundEnabled) return
-  snore.volume = soundVolume
+  if (!soundEnabled) return
+  const el = snoreElement()
+  el.volume = soundVolume
   try {
-    snore.currentTime = SNORE_IN
+    el.currentTime = SNORE_IN
   } catch {
     // seeking before metadata has arrived throws; the take starts near enough
-    // to the beginning that playing from zero is fine for one click
+    // to the beginning that playing from zero is fine for one press
   }
-  snore.play().catch(() => { /* the click was faster than the decoder */ })
+  el.play().catch(() => { /* the press beat the decoder to it */ })
   clearTimeout(snoreTimer)
-  snoreTimer = setTimeout(() => snore.pause(), SNORE_MS)
+  snoreTimer = setTimeout(() => el.pause(), SNORE_MS)
 }
 
 function revEngine () {
