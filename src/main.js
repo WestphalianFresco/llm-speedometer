@@ -14,6 +14,10 @@ const NORMAL_SIZE = { width: 470, height: 396 }
 const MINI_SIZE = { width: 278, height: 54 }
 const SCREEN_MARGIN = 24
 
+// Shipped alongside the source so the window, the taskbar button and the
+// installer all take their icon from the same file.
+const ICON_PATH = path.join(__dirname, '..', 'build', 'icon.png')
+
 // Local transcripts are cheap to re-read incrementally, so the widget can feel
 // live off them alone. The official endpoint schedules itself (see
 // providers/official.js) and is only consulted when it says it is ready.
@@ -213,7 +217,11 @@ function createWindow () {
     resizable: false,
     maximizable: false,
     fullscreenable: false,
-    skipTaskbar: true,
+    // It behaves like an app now: a button on the taskbar with the app's own
+    // icon, and a minimise that goes there rather than only collapsing in place.
+    skipTaskbar: false,
+    minimizable: true,
+    icon: ICON_PATH,
     alwaysOnTop: true,
     hasShadow: false,
     show: false,
@@ -478,6 +486,12 @@ onUi('ui:refresh', () => {
 
 onUi('ui:close', () => app.quit())
 
+// Minimising is the window going to the taskbar. Collapsing to the pill is a
+// different thing entirely and has its own control.
+onUi('ui:minimize', () => {
+  if (win && !win.isDestroyed()) win.minimize()
+})
+
 onUi('ui:mini', mini => {
   if (!win || win.isDestroyed()) return
   uiState.mini = mini
@@ -497,6 +511,9 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.whenReady().then(() => {
+    // Without this Windows groups the window under whatever it infers from the
+    // executable, and the taskbar button gets a generic Electron identity.
+    app.setAppUserModelId('dev.williamfan.llmspeedometer')
     loadUiState()
     // Mount the remembered vendor even though the app opens locked, so the
     // first reading is already warm when the fob is pressed.

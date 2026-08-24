@@ -21,9 +21,11 @@
     "productName": "LLM Speedometer",
     "files": [
       "src/**/*",
+      "build/icon.png",
       "package.json"
     ],
     "win": {
+      "icon": "build/icon.png",
       "target": [
         "nsis",
         "portable"

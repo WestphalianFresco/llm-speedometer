@@ -2470,7 +2470,8 @@ function setCollapsed (collapsed) {
   document.body.classList.toggle('mini', collapsed)
   window.meter.setMini(collapsed)
 }
-el('btn-min').addEventListener('click', () => setCollapsed(true))
+el('btn-collapse').addEventListener('click', () => setCollapsed(true))
+el('btn-min').addEventListener('click', () => window.meter.minimize())
 nodes.btnExpand.addEventListener('click', () => setCollapsed(false))
 // double-clicking the pill still works, as a shortcut rather than the only way
 nodes.card.addEventListener('dblclick', () => {
