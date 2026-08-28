@@ -1316,8 +1316,10 @@ const audioBus = ctx => audioOut || ctx.destination
 function setSoundLevel (enabled, volume) {
   soundEnabled = enabled
   soundVolume = volume
-  // the recording is outside the bus, so it is set directly
-  if (snore) snore.volume = enabled ? volume : 0
+  // the recordings sit outside the bus, so they are set directly
+  const level = enabled ? volume : 0
+  revSample.setVolume(level)
+  startSample.setVolume(level)
   if (!audioOut) return
   const t = audioCtx.currentTime
   holdParam(audioOut.gain, t)
@@ -1338,313 +1340,133 @@ function noiseSource (ctx, seconds) {
 }
 
 /**
- * The engine as a voice that can be held, not a fixed-length clip.
+ * The recorded sound effects.
  *
- * Blipping once starts it, lets it run up, and releases it; keeping the button
- * pressed holds it against the limiter for as long as you keep asking, exactly
- * like a throttle. That only works if the sound is a running instrument with a
- * stop, so the nodes live in `revVoice` until the throttle is released.
- */
-let revVoice = null
-
-// Take over a param that has automation scheduled on it without the jump that
-// a bare setValueAtTime would cause.
-function holdParam (param, t) {
-  if (param.cancelAndHoldAtTime) param.cancelAndHoldAtTime(t)
-  else {
-    param.cancelScheduledValues(t)
-    param.setValueAtTime(param.value, t)
-  }
-}
-
-const REV_RISE = 0.30   // seconds from idle to the limiter
-
-function revVoiceStart () {
-  const ctx = getAudio()
-  if (!ctx) return
-  if (revVoice) { revVoiceKick(); return }
-  const t0 = ctx.currentTime
-  const up = t0 + REV_RISE
-
-  const out = ctx.createGain()
-  out.gain.setValueAtTime(0.0001, t0)
-  out.gain.exponentialRampToValueAtTime(0.20, up)
-  out.connect(audioBus(ctx))
-
-  const tone = ctx.createBiquadFilter()
-  tone.type = 'lowpass'
-  tone.Q.value = 6
-  tone.frequency.setValueAtTime(380, t0)
-  tone.frequency.exponentialRampToValueAtTime(3600, up)
-  tone.connect(out)
-
-  // engine body: two saws a few cents apart beat against each other
-  const oscs = []
-  for (const detune of [0, 7]) {
-    const osc = ctx.createOscillator()
-    osc.type = 'sawtooth'
-    osc.detune.value = detune
-    osc.frequency.setValueAtTime(72, t0)
-    osc.frequency.exponentialRampToValueAtTime(330, up)
-    osc.connect(tone)
-    osc.start(t0)
-    oscs.push(osc)
-  }
-
-  // held against the limiter the note chops rather than holding flat — this is
-  // the stutter you hear from a car sitting on its rev limit
-  const chop = ctx.createOscillator()
-  chop.type = 'square'
-  chop.frequency.value = 9
-  const chopDepth = ctx.createGain()
-  chopDepth.gain.value = 0.045
-  chop.connect(chopDepth)
-  chopDepth.connect(out.gain)
-  chop.start(up)
-
-  // induction roar, looped for as long as the throttle is held
-  const noise = noiseSource(ctx, 1.5)
-  noise.loop = true
-  const band = ctx.createBiquadFilter()
-  band.type = 'bandpass'
-  band.Q.value = 1.1
-  band.frequency.setValueAtTime(500, t0)
-  band.frequency.exponentialRampToValueAtTime(2200, up)
-  const noiseGain = ctx.createGain()
-  noiseGain.gain.setValueAtTime(0.0001, t0)
-  noiseGain.gain.exponentialRampToValueAtTime(0.075, up)
-  noise.connect(band); band.connect(noiseGain); noiseGain.connect(audioBus(ctx))
-  noise.start(t0)
-
-  revVoice = { ctx: ctx, out: out, tone: tone, oscs: oscs, chop: chop, noise: noise, band: band, noiseGain: noiseGain }
-}
-
-// Another click while it is already up there is a stab of throttle against a
-// spinning engine, not a fresh start — a short bark on top of the running note.
-function revVoiceKick () {
-  if (!revVoice) return
-  const ctx = revVoice.ctx
-  const t = ctx.currentTime
-  const bump = t + 0.06
-  const back = t + 0.22
-  holdParam(revVoice.tone.frequency, t)
-  revVoice.tone.frequency.exponentialRampToValueAtTime(5200, bump)
-  revVoice.tone.frequency.exponentialRampToValueAtTime(3600, back)
-  holdParam(revVoice.out.gain, t)
-  revVoice.out.gain.exponentialRampToValueAtTime(0.26, bump)
-  revVoice.out.gain.exponentialRampToValueAtTime(0.20, back)
-}
-
-function revVoiceStop () {
-  const v = revVoice
-  if (!v) return
-  revVoice = null
-  const t = v.ctx.currentTime
-  const end = t + 0.62
-
-  holdParam(v.out.gain, t)
-  v.out.gain.exponentialRampToValueAtTime(0.0001, end)
-  holdParam(v.tone.frequency, t)
-  v.tone.frequency.exponentialRampToValueAtTime(520, end)
-  for (const osc of v.oscs) {
-    holdParam(osc.frequency, t)
-    osc.frequency.exponentialRampToValueAtTime(88, end)
-    osc.stop(end + 0.05)
-  }
-  holdParam(v.band.frequency, t)
-  v.band.frequency.exponentialRampToValueAtTime(600, end)
-  holdParam(v.noiseGain.gain, t)
-  v.noiseGain.gain.exponentialRampToValueAtTime(0.0001, end)
-  v.noise.stop(end + 0.05)
-  v.chop.stop(end)
-}
-
-/**
- * Gearbox sounds.
+ * Both of them want exactly the same handling, so they share one:
  *
- * All four are mechanical rather than musical: a short excitation through a
- * resonant filter, which is what a struck or scraped piece of metal is. They
- * route through the same bus as everything else, so the volume slider and the
- * mute switch reach them without knowing they exist.
- */
-
-/** A struck-metal hit: noise burst through a bandpass that rings and dies. */
-function metalHit (ctx, at, { freq, q, level, decay, tone = 0 }) {
-  const body = noiseSource(ctx, decay + 0.05)
-  const ring = ctx.createBiquadFilter()
-  ring.type = 'bandpass'
-  ring.frequency.value = freq
-  ring.Q.value = q
-  const gain = ctx.createGain()
-  gain.gain.setValueAtTime(0.0001, at)
-  gain.gain.exponentialRampToValueAtTime(level, at + 0.004)
-  gain.gain.exponentialRampToValueAtTime(0.0001, at + decay)
-  body.connect(ring); ring.connect(gain); gain.connect(audioBus(ctx))
-  body.start(at)
-  body.stop(at + decay + 0.05)
-
-  // an optional pitched thud under the hit, for the heavier sounds
-  if (tone) {
-    const osc = ctx.createOscillator()
-    osc.type = 'sine'
-    osc.frequency.setValueAtTime(tone, at)
-    osc.frequency.exponentialRampToValueAtTime(tone * 0.55, at + decay)
-    const thud = ctx.createGain()
-    thud.gain.setValueAtTime(0.0001, at)
-    thud.gain.exponentialRampToValueAtTime(level * 1.4, at + 0.008)
-    thud.gain.exponentialRampToValueAtTime(0.0001, at + decay)
-    osc.connect(thud); thud.connect(audioBus(ctx))
-    osc.start(at)
-    osc.stop(at + decay + 0.05)
-  }
-}
-
-/** Pedal down is a damped click; letting it up is softer and lower. */
-function playClutch (down) {
-  const ctx = getAudio()
-  if (!ctx) return
-  const t = ctx.currentTime
-  metalHit(ctx, t, down
-    ? { freq: 900, q: 3, level: 0.1, decay: 0.07, tone: 150 }
-    : { freq: 620, q: 2.5, level: 0.06, decay: 0.1, tone: 95 })
-}
-
-/** The lever dropping over a detent: small, bright, very short. */
-function playDetent () {
-  const ctx = getAudio()
-  if (!ctx) return
-  metalHit(ctx, ctx.currentTime, { freq: 2600, q: 9, level: 0.05, decay: 0.035 })
-}
-
-/** Selecting a gear: the solid clunk of dogs meshing. */
-function playEngage () {
-  const ctx = getAudio()
-  if (!ctx) return
-  const t = ctx.currentTime
-  metalHit(ctx, t, { freq: 420, q: 4, level: 0.16, decay: 0.13, tone: 120 })
-  // the second, quieter knock of the linkage taking up its slack
-  metalHit(ctx, t + 0.045, { freq: 1500, q: 7, level: 0.05, decay: 0.06 })
-}
-
-/**
- * Gear grind: what you get for shifting without the clutch. Two detuned saws
- * chopped by a fast square LFO — the chop IS the sound, because the teeth are
- * making and breaking contact many times a second rather than meshing.
- */
-function playGrind () {
-  const ctx = getAudio()
-  if (!ctx) return
-  const t = ctx.currentTime
-  const end = t + 0.34
-
-  const out = ctx.createGain()
-  out.gain.setValueAtTime(0.0001, t)
-  out.gain.exponentialRampToValueAtTime(0.12, t + 0.02)
-  out.gain.exponentialRampToValueAtTime(0.0001, end)
-  out.connect(audioBus(ctx))
-
-  const chop = ctx.createOscillator()
-  chop.type = 'square'
-  chop.frequency.setValueAtTime(38, t)
-  chop.frequency.linearRampToValueAtTime(64, end)
-  const chopDepth = ctx.createGain()
-  chopDepth.gain.value = 0.09
-  chop.connect(chopDepth)
-  chopDepth.connect(out.gain)
-  chop.start(t)
-  chop.stop(end)
-
-  const tone = ctx.createBiquadFilter()
-  tone.type = 'bandpass'
-  tone.frequency.setValueAtTime(1800, t)
-  tone.frequency.exponentialRampToValueAtTime(900, end)
-  tone.Q.value = 2.2
-  tone.connect(out)
-
-  for (const detune of [-18, 21]) {
-    const osc = ctx.createOscillator()
-    osc.type = 'sawtooth'
-    osc.detune.value = detune
-    osc.frequency.setValueAtTime(210, t)
-    osc.frequency.exponentialRampToValueAtTime(150, end)
-    osc.connect(tone)
-    osc.start(t)
-    osc.stop(end)
-  }
-
-  const scrape = noiseSource(ctx, 0.4)
-  const rasp = ctx.createBiquadFilter()
-  rasp.type = 'bandpass'
-  rasp.Q.value = 1.4
-  rasp.frequency.setValueAtTime(3200, t)
-  rasp.frequency.exponentialRampToValueAtTime(1600, end)
-  const scrapeGain = ctx.createGain()
-  scrapeGain.gain.setValueAtTime(0.0001, t)
-  scrapeGain.gain.exponentialRampToValueAtTime(0.07, t + 0.03)
-  scrapeGain.gain.exponentialRampToValueAtTime(0.0001, end)
-  chopDepth.connect(scrapeGain.gain)
-  scrape.connect(rasp); rasp.connect(scrapeGain); scrapeGain.connect(audioBus(ctx))
-  scrape.start(t)
-  scrape.stop(end)
-}
-
-/**
- * The snore.
+ *   - Built on first press rather than at load. Creating a media element up
+ *     front races the audio output coming up and produces an
+ *     AUDIO_RENDERER_ERROR, which is a transient condition, not a missing file.
+ *   - A failure drops the element instead of setting a flag, so the next press
+ *     builds a fresh one and tries again rather than one bad moment at startup
+ *     silencing the app for the session.
+ *   - Played from a chosen point, because both files open with silence and one
+ *     of them holds three takes back to back.
+ *   - Faded rather than cut, since stopping a recording dead sounds like a file
+ *     ending, which is exactly what it is.
  *
- * A recording rather than a synthesis: sfx/snore.mp4 is the original meme sound
- * effect. The file holds three takes back to back with silence between them, so
- * only the first is played — in at SNORE_IN, stopped at SNORE_OUT — rather than
- * letting the element run on through the gaps and the repeats.
- *
- * It plays through a plain <audio> element instead of the Web Audio bus.
- * Feeding a file:// media element into a MediaElementAudioSourceNode taints it
- * and the node outputs silence, so the sound settings are applied to the
+ * They play through plain <audio> elements rather than the Web Audio bus:
+ * feeding a file:// media element into a MediaElementAudioSourceNode taints it
+ * and the node emits silence, so the sound settings are applied to each
  * element's own volume instead.
- */
-const SNORE_IN = 0.15
-const SNORE_OUT = 2.0
-const SNORE_MS = Math.round((SNORE_OUT - SNORE_IN) * 1000)
-
-let snore = null
-let snoreTimer = null
-
-/**
- * Built on first use, not at load.
  *
- * Creating it up front raced the audio output coming up and produced an
- * AUDIO_RENDERER_ERROR on some launches — which is a transient condition, not a
- * missing file. So a failure drops the element rather than setting a flag: the
- * next press builds a fresh one and tries again, instead of one bad moment at
- * startup silencing the app for the rest of the session.
+ * @param {string} src
+ * @param {{from?: number, ms?: number, fade?: number}} opts `ms` is how long to
+ *   play before fading on its own; leave it out for a sound that is stopped by
+ *   whatever started it.
  */
-function snoreElement () {
-  if (snore) return snore
-  const el = new Audio('sfx/snore.mp4')
-  el.preload = 'auto'
-  el.volume = soundEnabled ? soundVolume : 0
-  el.addEventListener('error', () => {
-    console.warn('snore.mp4 failed, will retry on the next press:',
-      el.error && el.error.message)
-    if (snore === el) snore = null
-  })
-  snore = el
-  return el
+function makeSample (src, opts) {
+  const from = opts.from || 0
+  const runFor = opts.ms || 0
+  const fadeMs = opts.fade || 240
+  let el = null
+  let stopTimer = null
+  let fadeTimer = null
+
+  const element = () => {
+    if (el) return el
+    const made = new Audio(src)
+    made.preload = 'auto'
+    made.volume = soundEnabled ? soundVolume : 0
+    made.addEventListener('error', () => {
+      console.warn(src + ' failed, will retry on the next press:',
+        made.error && made.error.message)
+      if (el === made) el = null
+    })
+    el = made
+    return made
+  }
+
+  const fadeOut = () => {
+    const playing = el
+    if (!playing || playing.paused) return
+    clearInterval(fadeTimer)
+    let left = fadeMs
+    fadeTimer = setInterval(() => {
+      left -= 40
+      playing.volume = Math.max(0, soundVolume * (left / fadeMs))
+      if (left > 0) return
+      clearInterval(fadeTimer)
+      playing.pause()
+      playing.volume = soundVolume
+    }, 40)
+  }
+
+  return {
+    play () {
+      if (!soundEnabled) return
+      const playing = element()
+      clearTimeout(stopTimer)
+      clearInterval(fadeTimer)
+      playing.volume = soundVolume
+      try {
+        playing.currentTime = from
+      } catch {
+        // seeking before metadata has arrived throws; starting from the top
+        // costs one press its promptness and nothing else
+      }
+      playing.play().catch(() => { /* the press beat the decoder to it */ })
+      if (runFor) stopTimer = setTimeout(fadeOut, runFor - fadeMs)
+    },
+    setVolume (v) { if (el) el.volume = v }
+  }
 }
 
-function playSnore () {
-  if (!soundEnabled) return
-  const el = snoreElement()
-  el.volume = soundVolume
-  try {
-    el.currentTime = SNORE_IN
-  } catch {
-    // seeking before metadata has arrived throws; the take starts near enough
-    // to the beginning that playing from zero is fine for one press
-  }
-  el.play().catch(() => { /* the press beat the decoder to it */ })
-  clearTimeout(snoreTimer)
-  snoreTimer = setTimeout(() => el.pause(), SNORE_MS)
-}
+/*
+ * sfx/rev.mp4 is an engine being blipped: silence, then two swells with a dip
+ * between them, tapering out by about 4.8 seconds. It plays all the way through
+ * rather than being cut off when the throttle closes — the recording is a
+ * complete rev and gets to finish as one. Every press restarts it, which is
+ * what makes repeated presses sound like repeated blips rather than one clip
+ * playing over itself.
+ */
+const REV_SOUND_MS = 4450
+const revSample = makeSample('sfx/rev.mp4',
+  { from: 0.5, ms: REV_SOUND_MS, fade: 250 })
+
+/*
+ * sfx/engine-start.mp4 holds three takes back to back with silence between
+ * them, so only the first is played — in at 0.15s, out at 2.0s.
+ */
+const IGNITION_MS = 1850
+const startSample = makeSample('sfx/engine-start.mp4',
+  { from: 0.15, ms: IGNITION_MS, fade: 200 })
+
+const playRevSound = () => revSample.play()
+const playIgnition = () => startSample.play()
+
+/* How long one press keeps the throttle open. Pressing again inside this
+   window extends it rather than restarting a fresh blip, so leaning on the
+   button holds the engine up the way a real one stays up.
+   Net of the ~300ms it takes to climb, this is the time spent up at the top,
+   which is the part of a blip worth hearing. */
+const REV_HOLD_MS = 1150
+// After release: the needle falls, the note drops, and only then does the
+// gauge go back to reporting.
+const REV_FALL_MS = 700
+// The limiter does not hold a perfectly steady number — it bounces between
+// full scale and a little under it, which is what keeps the needle alive at
+// the top instead of pinned like a stuck gauge.
+const LIMITER_MS = 150
+// Shallow on purpose: the spring only partly follows a target this brief, so a
+// deep dip would swing the needle several degrees and flick the digits back
+// and forth across the 19k/20k rounding boundary. This flutters and holds.
+const LIMITER_DIP = 0.97
+
+let revHoldTimer = null
+let revFallTimer = null
+let revLimiterTimer = null
+let revPreTarget = 0
 
 function revEngine () {
   const alreadyUp = revActive
@@ -1657,10 +1479,9 @@ function revEngine () {
   clearTimeout(revHoldTimer)
   clearTimeout(revFallTimer)
 
-  // Start decides for itself whether this is a fresh start or a stab of
-  // throttle at a running engine — asking `alreadyUp` would go silent for a
-  // click that lands after the voice stopped but before the fall completes.
-  revVoiceStart()
+  // Every press restarts the clip, which is what makes repeated presses sound
+  // like repeated blips rather than one recording playing over itself.
+  playRevSound()
 
   if (!revLimiterTimer) {
     setNeedle('tach', DIALS.tach.max)
@@ -1682,7 +1503,6 @@ function revRelease () {
   // bottom stop before climbing back to the live rate.
   dialState.tach.settleUntil = performance.now() + REV_FALL_MS + 400
   setNeedle('tach', latest ? latest.tokensPerMinute || 0 : revPreTarget)
-  revVoiceStop()
   revFallTimer = setTimeout(() => {
     revActive = false
     if (latest) render(latest)
@@ -2384,15 +2204,15 @@ el('btn-rev').addEventListener('click', revEngine)
 let crankTimer = null
 el('btn-refresh').addEventListener('click', e => {
   const btn = e.currentTarget
-  // The icon keeps turning for as long as the snore lasts, so the spin reads as
+  // The icon keeps turning for as long as the starter does, so the spin reads as
   // the thing making the noise rather than running alongside it. Clicking again
   // restarts both, rather than being swallowed by the class already being set.
   clearTimeout(crankTimer)
   btn.classList.remove('cranking')
   void btn.offsetWidth
   btn.classList.add('cranking')
-  crankTimer = setTimeout(() => btn.classList.remove('cranking'), SNORE_MS)
-  playSnore()
+  crankTimer = setTimeout(() => btn.classList.remove('cranking'), IGNITION_MS)
+  playIgnition()
   window.meter.refresh()
 })
 el('vendor-prev').addEventListener('click', () => stepVendor(-1))
