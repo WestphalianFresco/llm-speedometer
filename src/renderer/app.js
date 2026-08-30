@@ -1336,9 +1336,20 @@ function getAudio () {
 /** The node every voice connects to instead of ctx.destination. */
 const audioBus = ctx => audioOut || ctx.destination
 
+// Take over a param that has automation scheduled on it without the jump that
+// a bare setValueAtTime would cause.
+function holdParam (param, t) {
+  if (param.cancelAndHoldAtTime) param.cancelAndHoldAtTime(t)
+  else {
+    param.cancelScheduledValues(t)
+    param.setValueAtTime(param.value, t)
+  }
+}
+
 function setSoundLevel (enabled, volume) {
-  soundEnabled = enabled
-  soundVolume = volume
+  // These arrive from ui.json via IPC, so they are checked rather than trusted.
+  soundEnabled = Boolean(enabled)
+  soundVolume = Number.isFinite(volume) ? Math.min(1, Math.max(0, volume)) : 0.8
   // the recordings sit outside the bus, so they are set directly
   const level = enabled ? volume : 0
   revSample.setVolume(level)
@@ -1360,6 +1371,136 @@ function noiseSource (ctx, seconds) {
   const source = ctx.createBufferSource()
   source.buffer = buffer
   return source
+}
+
+
+/**
+ * Gearbox sounds.
+ *
+ * All four are mechanical rather than musical: a short excitation through a
+ * resonant filter, which is what a struck or scraped piece of metal is. They
+ * route through the same bus as everything else, so the volume slider and the
+ * mute switch reach them without knowing they exist.
+ */
+
+/** A struck-metal hit: noise burst through a bandpass that rings and dies. */
+function metalHit (ctx, at, { freq, q, level, decay, tone = 0 }) {
+  const body = noiseSource(ctx, decay + 0.05)
+  const ring = ctx.createBiquadFilter()
+  ring.type = 'bandpass'
+  ring.frequency.value = freq
+  ring.Q.value = q
+  const gain = ctx.createGain()
+  gain.gain.setValueAtTime(0.0001, at)
+  gain.gain.exponentialRampToValueAtTime(level, at + 0.004)
+  gain.gain.exponentialRampToValueAtTime(0.0001, at + decay)
+  body.connect(ring); ring.connect(gain); gain.connect(audioBus(ctx))
+  body.start(at)
+  body.stop(at + decay + 0.05)
+
+  // an optional pitched thud under the hit, for the heavier sounds
+  if (tone) {
+    const osc = ctx.createOscillator()
+    osc.type = 'sine'
+    osc.frequency.setValueAtTime(tone, at)
+    osc.frequency.exponentialRampToValueAtTime(tone * 0.55, at + decay)
+    const thud = ctx.createGain()
+    thud.gain.setValueAtTime(0.0001, at)
+    thud.gain.exponentialRampToValueAtTime(level * 1.4, at + 0.008)
+    thud.gain.exponentialRampToValueAtTime(0.0001, at + decay)
+    osc.connect(thud); thud.connect(audioBus(ctx))
+    osc.start(at)
+    osc.stop(at + decay + 0.05)
+  }
+}
+
+/** Pedal down is a damped click; letting it up is softer and lower. */
+function playClutch (down) {
+  const ctx = getAudio()
+  if (!ctx) return
+  const t = ctx.currentTime
+  metalHit(ctx, t, down
+    ? { freq: 900, q: 3, level: 0.1, decay: 0.07, tone: 150 }
+    : { freq: 620, q: 2.5, level: 0.06, decay: 0.1, tone: 95 })
+}
+
+/** The lever dropping over a detent: small, bright, very short. */
+function playDetent () {
+  const ctx = getAudio()
+  if (!ctx) return
+  metalHit(ctx, ctx.currentTime, { freq: 2600, q: 9, level: 0.05, decay: 0.035 })
+}
+
+/** Selecting a gear: the solid clunk of dogs meshing. */
+function playEngage () {
+  const ctx = getAudio()
+  if (!ctx) return
+  const t = ctx.currentTime
+  metalHit(ctx, t, { freq: 420, q: 4, level: 0.16, decay: 0.13, tone: 120 })
+  // the second, quieter knock of the linkage taking up its slack
+  metalHit(ctx, t + 0.045, { freq: 1500, q: 7, level: 0.05, decay: 0.06 })
+}
+
+/**
+ * Gear grind: what you get for shifting without the clutch. Two detuned saws
+ * chopped by a fast square LFO — the chop IS the sound, because the teeth are
+ * making and breaking contact many times a second rather than meshing.
+ */
+function playGrind () {
+  const ctx = getAudio()
+  if (!ctx) return
+  const t = ctx.currentTime
+  const end = t + 0.34
+
+  const out = ctx.createGain()
+  out.gain.setValueAtTime(0.0001, t)
+  out.gain.exponentialRampToValueAtTime(0.12, t + 0.02)
+  out.gain.exponentialRampToValueAtTime(0.0001, end)
+  out.connect(audioBus(ctx))
+
+  const chop = ctx.createOscillator()
+  chop.type = 'square'
+  chop.frequency.setValueAtTime(38, t)
+  chop.frequency.linearRampToValueAtTime(64, end)
+  const chopDepth = ctx.createGain()
+  chopDepth.gain.value = 0.09
+  chop.connect(chopDepth)
+  chopDepth.connect(out.gain)
+  chop.start(t)
+  chop.stop(end)
+
+  const tone = ctx.createBiquadFilter()
+  tone.type = 'bandpass'
+  tone.frequency.setValueAtTime(1800, t)
+  tone.frequency.exponentialRampToValueAtTime(900, end)
+  tone.Q.value = 2.2
+  tone.connect(out)
+
+  for (const detune of [-18, 21]) {
+    const osc = ctx.createOscillator()
+    osc.type = 'sawtooth'
+    osc.detune.value = detune
+    osc.frequency.setValueAtTime(210, t)
+    osc.frequency.exponentialRampToValueAtTime(150, end)
+    osc.connect(tone)
+    osc.start(t)
+    osc.stop(end)
+  }
+
+  const scrape = noiseSource(ctx, 0.4)
+  const rasp = ctx.createBiquadFilter()
+  rasp.type = 'bandpass'
+  rasp.Q.value = 1.4
+  rasp.frequency.setValueAtTime(3200, t)
+  rasp.frequency.exponentialRampToValueAtTime(1600, end)
+  const scrapeGain = ctx.createGain()
+  scrapeGain.gain.setValueAtTime(0.0001, t)
+  scrapeGain.gain.exponentialRampToValueAtTime(0.07, t + 0.03)
+  scrapeGain.gain.exponentialRampToValueAtTime(0.0001, end)
+  chopDepth.connect(scrapeGain.gain)
+  scrape.connect(rasp); rasp.connect(scrapeGain); scrapeGain.connect(audioBus(ctx))
+  scrape.start(t)
+  scrape.stop(end)
 }
 
 /**
@@ -1388,6 +1529,14 @@ function noiseSource (ctx, seconds) {
  *   play before fading on its own; leave it out for a sound that is stopped by
  *   whatever started it.
  */
+/**
+ * HTMLMediaElement.volume throws on anything non-finite, and it throws from
+ * inside the fade interval below — where the exception skips the clearInterval
+ * and leaves the timer running, failing several times a second for the life of
+ * the page. So nothing reaches it unchecked.
+ */
+const safeVolume = v => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0)
+
 function makeSample (src, opts) {
   const from = opts.from || 0
   const runFor = opts.ms || 0
@@ -1400,7 +1549,7 @@ function makeSample (src, opts) {
     if (el) return el
     const made = new Audio(src)
     made.preload = 'auto'
-    made.volume = soundEnabled ? soundVolume : 0
+    made.volume = safeVolume(soundEnabled ? soundVolume : 0)
     made.addEventListener('error', () => {
       console.warn(src + ' failed, will retry on the next press:',
         made.error && made.error.message)
@@ -1417,11 +1566,11 @@ function makeSample (src, opts) {
     let left = fadeMs
     fadeTimer = setInterval(() => {
       left -= 40
-      playing.volume = Math.max(0, soundVolume * (left / fadeMs))
+      playing.volume = safeVolume(soundVolume * (left / fadeMs))
       if (left > 0) return
       clearInterval(fadeTimer)
       playing.pause()
-      playing.volume = soundVolume
+      playing.volume = safeVolume(soundVolume)
     }, 40)
   }
 
@@ -1431,7 +1580,7 @@ function makeSample (src, opts) {
       const playing = element()
       clearTimeout(stopTimer)
       clearInterval(fadeTimer)
-      playing.volume = soundVolume
+      playing.volume = safeVolume(soundVolume)
       try {
         playing.currentTime = from
       } catch {
@@ -1441,7 +1590,7 @@ function makeSample (src, opts) {
       playing.play().catch(() => { /* the press beat the decoder to it */ })
       if (runFor) stopTimer = setTimeout(fadeOut, runFor - fadeMs)
     },
-    setVolume (v) { if (el) el.volume = v }
+    setVolume (v) { if (el) el.volume = safeVolume(v) }
   }
 }
 
