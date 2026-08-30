@@ -60,7 +60,7 @@ function costOf (usage, model) {
 
 class LocalProvider {
   constructor () {
-    /** @type {Map<string, {offset: number, inode: number|null}>} */
+    /** @type {Map<string, {offset: number, inode: number|null, lastId: string|null}>} */
     this.cursors = new Map()
     /** @type {Array<{ts: number, cost: number, model: string}>} */
     this.events = []
@@ -90,7 +90,7 @@ class LocalProvider {
     return out
   }
 
-  _ingestLine (line) {
+  _ingestLine (line, state) {
     // Cheap prefilter: the vast majority of transcript lines are user turns,
     // tool results and metadata with no usage block at all.
     if (line.length < 40 || line.indexOf('"usage"') === -1) return
@@ -99,6 +99,16 @@ class LocalProvider {
 
     const usage = record.message && record.message.usage
     if (!usage) return
+
+    // A response is written one line per content block — thinking, text,
+    // tool_use — and each of those lines repeats the whole response's usage.
+    // Charging for every line billed the same turn two or three times over.
+    // They are always consecutive, so one id of memory is enough to collapse
+    // them back into the single response they were.
+    const id = record.message.id
+    if (id && id === state.lastId) return
+    if (id) state.lastId = id
+
     const ts = Date.parse(record.timestamp)
     if (Number.isNaN(ts)) return
 
@@ -164,8 +174,15 @@ class LocalProvider {
       // the first line is a fragment whenever we started at an offset we chose
       // rather than one we previously stopped at
       if (start > 0 && !cursor) lines.shift()
-      for (const line of lines) this._ingestLine(line)
-      this.cursors.set(file, { offset: start + consumed, inode: stat.ino ?? null })
+      // The id only carries forward when this really is a continuation of the
+      // same file; a re-read from the top starts with no memory of a response.
+      const state = { lastId: start > 0 && cursor ? cursor.lastId || null : null }
+      for (const line of lines) this._ingestLine(line, state)
+      this.cursors.set(file, {
+        offset: start + consumed,
+        inode: stat.ino ?? null,
+        lastId: state.lastId
+      })
     } finally {
       fs.closeSync(fd)
     }

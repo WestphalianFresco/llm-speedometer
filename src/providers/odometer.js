@@ -19,7 +19,7 @@ const { claudeProjects } = require('./paths')
  */
 
 /** @type {Map<string, {mtimeMs: number, size: number, offset: number,
- *                        tokens: number, turns: number}>} */
+ *                        lastId: string|null, tokens: number, turns: number}>} */
 const cache = new Map()
 
 /**
@@ -28,9 +28,11 @@ const cache = new Map()
  * @param {string} file
  * @param {number} from byte offset to start at, always a line boundary this
  *   function previously reported as consumed.
- * @returns {{tokens: number, turns: number, consumed: number}}
+ * @param {string|null} lastId id of the last response counted before this
+ *   slice, so a response split across the slice boundary is not counted twice.
+ * @returns {{tokens: number, turns: number, consumed: number, lastId: string|null}}
  */
-function tallySlice (file, from) {
+function tallySlice (file, from, lastId) {
   let tokens = 0
   let turns = 0
   let text = ''
@@ -40,22 +42,22 @@ function tallySlice (file, from) {
     fd = fs.openSync(file, 'r')
     const stat = fs.fstatSync(fd)
     const length = stat.size - from
-    if (length <= 0) return { tokens, turns, consumed: from }
+    if (length <= 0) return { tokens, turns, consumed: from, lastId }
     const buffer = Buffer.allocUnsafe(length)
     // decode only the bytes actually read — the rest of the buffer is
     // uninitialised heap, not transcript
     const read = fs.readSync(fd, buffer, 0, length, from)
-    if (read <= 0) return { tokens, turns, consumed: from }
+    if (read <= 0) return { tokens, turns, consumed: from, lastId }
     text = buffer.toString('utf8', 0, read)
   } catch {
-    return { tokens, turns, consumed: from }
+    return { tokens, turns, consumed: from, lastId }
   } finally {
     if (fd !== undefined) try { fs.closeSync(fd) } catch { /* ignore */ }
   }
 
   // Stop at the last complete line: the file is appended to as we read it.
   const lastNewline = text.lastIndexOf('\n')
-  if (lastNewline === -1) return { tokens, turns, consumed: from }
+  if (lastNewline === -1) return { tokens, turns, consumed: from, lastId }
   const complete = text.slice(0, lastNewline)
   const consumed = from + Buffer.byteLength(complete, 'utf8') + 1
 
@@ -68,13 +70,22 @@ function tallySlice (file, from) {
     try { record = JSON.parse(line) } catch { continue }
     const usage = record.message && record.message.usage
     if (!usage) continue
+    // One API response is written as several lines — one per content block, so
+    // a turn that thought, spoke and called a tool is three — and every one of
+    // them repeats the same usage object. Counting lines therefore counted the
+    // same tokens two or three times over. The lines of a response are always
+    // consecutive, so skipping a repeat of the id just counted collapses them
+    // back into the single response they were.
+    const id = record.message.id
+    if (id && id === lastId) continue
+    if (id) lastId = id
     turns++
     tokens +=
       (usage.input_tokens || 0) +
       (usage.cache_creation_input_tokens || 0) +
       (usage.output_tokens || 0)
   }
-  return { tokens, turns, consumed }
+  return { tokens, turns, consumed, lastId }
 }
 
 /**
@@ -95,12 +106,13 @@ function entryFor (file) {
 
   const resumable = Boolean(cached) && stat.size >= cached.offset
   const from = resumable ? cached.offset : 0
-  const slice = tallySlice(file, from)
+  const slice = tallySlice(file, from, resumable ? cached.lastId : null)
 
   const entry = {
     mtimeMs: stat.mtimeMs,
     size: stat.size,
     offset: slice.consumed,
+    lastId: slice.lastId,
     tokens: (resumable ? cached.tokens : 0) + slice.tokens,
     turns: (resumable ? cached.turns : 0) + slice.turns
   }
