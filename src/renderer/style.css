@@ -1249,7 +1249,31 @@ body.mini .gearbox { display: none; }
   color: var(--faint);
 }
 
-.footer .reset { -webkit-app-region: no-drag; cursor: help; }
+/* Two countdowns read as a pair of readouts, not a sentence: each is a caps
+   label with a value beside it, the same hierarchy the session list and the
+   gauge captions already use. Tabular figures keep the seconds from shifting
+   the line every tick. */
+.footer .reset {
+  -webkit-app-region: no-drag; cursor: help;
+  display: flex; align-items: baseline; gap: 13px;
+}
+
+.reset-mark { color: var(--dim); }
+
+.reset-item { display: flex; align-items: baseline; gap: 5px; }
+
+.reset-label {
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--ls-caps);
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.reset-time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
 
 /* ---------- collapsed pill ---------- */
 

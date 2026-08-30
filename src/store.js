@@ -182,6 +182,10 @@ class UsageStore {
       fiveHour: { ...this._resolveWindow('fiveHour'), label: WINDOWS.fiveHour.label },
       sevenDay: { ...this._resolveWindow('sevenDay'), label: WINDOWS.sevenDay.label },
       spend: { fiveHour: localSnap.fiveHourSpend, sevenDay: localSnap.sevenDaySpend },
+      // The percent-of-quota each unit of local spend is worth, so a reader can
+      // be shown the share of the window it burned rather than the internal
+      // weight itself. Null until an official reading has calibrated it.
+      quotaRate: { fiveHour: this.calibration.fiveHour, sevenDay: this.calibration.sevenDay },
       // live consumption, which is what the speedometer reads
       tokensPerMinute: this.local.ratePerMinute(),
       calibrated: this.calibration.fiveHour !== null || this.calibration.sevenDay !== null,

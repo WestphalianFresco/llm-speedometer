@@ -8,6 +8,8 @@ const nodes = {
   mascot: el('mascot'),
   cluster: el('cluster'),
   reset: el('reset'),
+  resetFive: el('reset-5h'),
+  resetWeek: el('reset-7d'),
   acct: el('acct'),
   hdrVersion: el('hdr-version'),
   hdrCwd: el('hdr-cwd'),
@@ -604,17 +606,19 @@ function formatRate (perMin) {
 
 const pad2 = n => (n < 10 ? '0' : '') + n
 
+// Bare duration, no 'to reset' tail: the footer now prints two of these behind
+// one shared 'resets in', so the phrase belongs to the line, not to each half.
 function formatCountdown (ms) {
-  if (ms <= 0) return 'resetting now'
+  if (ms <= 0) return 'now'
   const total = Math.floor(ms / 1000)
   const s = total % 60
   const m = Math.floor(total / 60) % 60
   const h = Math.floor(total / 3600) % 24
   const d = Math.floor(total / 86400)
-  if (d > 0) return d + 'd ' + pad2(h) + 'h ' + pad2(m) + 'm ' + pad2(s) + 's to reset'
-  if (h > 0) return h + 'h ' + pad2(m) + 'm ' + pad2(s) + 's to reset'
-  if (m > 0) return m + 'm ' + pad2(s) + 's to reset'
-  return s + 's to reset'
+  if (d > 0) return d + 'd ' + pad2(h) + 'h ' + pad2(m) + 'm ' + pad2(s) + 's'
+  if (h > 0) return h + 'h ' + pad2(m) + 'm ' + pad2(s) + 's'
+  if (m > 0) return m + 'm ' + pad2(s) + 's'
+  return s + 's'
 }
 
 /** Long paths are truncated from the LEFT — the tail is the informative half. */
@@ -1233,14 +1237,31 @@ function renderOdometer (data) {
   ].join(nl)
 }
 
+/**
+ * Local spend rendered as what it actually measures.
+ *
+ * The dollars in this app are a weighting unit, not a bill — a subscription is
+ * never charged per token, and the figure never reaches the gauge: the store
+ * multiplies it by a learned percent-per-unit rate, so the currency cancels and
+ * only a share of the window comes out. Printing the raw number as "spend $"
+ * put a charge in front of someone who is not being charged. This shows the
+ * same quantity in the one unit that means something on a plan, using the same
+ * arithmetic the needle itself runs.
+ */
+function quotaShare (spend, rate) {
+  if (!rate) return 'not calibrated yet'
+  return Math.min(100, Math.max(0, spend * rate)).toFixed(1) + '% of the window'
+}
+
 function buildTooltip (data) {
   const nl = String.fromCharCode(10)
   const lines = []
   lines.push('Source                ' +
     (data.official.backingOff ? 'throttled -> local' : data.fiveHour.source))
   lines.push('Output rate           ' + Math.round(data.tokensPerMinute || 0) + ' tok/min')
-  lines.push('5-hour window spend   $' + data.spend.fiveHour.toFixed(2))
-  lines.push('Weekly window spend   $' + data.spend.sevenDay.toFixed(2))
+  const rate = data.quotaRate || {}
+  lines.push('5-hour local burn     ' + quotaShare(data.spend.fiveHour, rate.fiveHour))
+  lines.push('Weekly local burn     ' + quotaShare(data.spend.sevenDay, rate.sevenDay))
   lines.push('Local records         ' + data.localEvents)
   // Spelled out because the footer can only count down one window at a time,
   // and which one it picked is otherwise invisible.
@@ -1262,17 +1283,19 @@ function buildTooltip (data) {
 
 // Countdown ticks locally so the widget feels alive between polls.
 //
-// This line is the 5-hour window and nothing else. It used to fall through to
-// the weekly reset whenever the 5-hour one was unknown, which put a number in
-// days on a readout everybody reads as the short window — worse than admitting
-// the value is not known yet. The weekly reset is still in the diagnostics
-// tooltip, where a multi-day figure is labelled and expected.
+// Both windows are named and shown. The line used to carry the 5-hour figure
+// alone, and before that it fell through to the weekly one whenever the 5-hour
+// was unknown — which put a number in days on a readout everybody read as the
+// short window. Labelling each half fixes that ambiguity at the source and
+// stops the weekly reset from being tooltip-only.
+function resetIn (at) {
+  return at ? formatCountdown(at - Date.now()) : 'unknown'
+}
+
 function tickCountdown () {
   if (!latest) return
-  const five = latest.fiveHour.resetsAt
-  nodes.reset.textContent = five
-    ? '⟳ 5H · ' + formatCountdown(five - Date.now())
-    : '⟳ 5H · reset time unknown'
+  nodes.resetFive.textContent = resetIn(latest.fiveHour.resetsAt)
+  nodes.resetWeek.textContent = resetIn(latest.sevenDay.resetsAt)
 }
 // ticks every second now that the countdown is second-accurate
 setInterval(tickCountdown, 1000)
