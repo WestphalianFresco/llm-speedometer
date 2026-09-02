@@ -13,13 +13,47 @@ const BACKOFF_LADDER_MS = [15, 30, 60, 120].map(m => m * 60 * 1000)
 
 const numeric = v => (typeof v === 'number' && Number.isFinite(v) ? v : null)
 
-// Utilization arrives as either 0..1 or 0..100 depending on the field; both
-// shapes have been observed, so normalize rather than assume.
-function toPercent (value) {
-  const n = numeric(value)
-  if (n === null) return null
-  if (n < 0) return null
-  return n <= 1 ? n * 100 : n
+// The fields a window can carry its level in, in the order they are trusted.
+const USED_FIELDS = ['utilization', 'used_percent', 'percent_used', 'percentage']
+const REMAINING_FIELDS = ['remaining', 'remaining_percent']
+
+/** Every level-ish number in one window, whichever field it arrived in. */
+function levels (raw) {
+  if (!raw) return []
+  const out = []
+  for (const field of USED_FIELDS.concat(REMAINING_FIELDS)) {
+    const n = numeric(raw[field])
+    if (n !== null && n >= 0) out.push(n)
+  }
+  return out
+}
+
+/**
+ * Levels arrive as either 0..1 or 0..100 depending on the payload, and no
+ * single field can tell the two apart: 1 is a drained tank on one scale and a
+ * barely-touched one on the other. Deciding field by field is what made a
+ * 5-hour window twelve minutes old, sitting at 1%, read as bone empty.
+ *
+ * So the scale is settled once, from every number in the payload at once:
+ *   - anything above 1 can only be a percentage, and settles it for all of them
+ *   - failing that, a true fraction below 1 can only be the 0..1 shape
+ *   - a payload of nothing but 0s and 1s is read as percentages: the fractional
+ *     shape carries decimals, and a window at exactly 1.0 is the rarer claim
+ */
+function scaleFor (raws) {
+  const all = raws.reduce((acc, raw) => acc.concat(levels(raw)), [])
+  if (all.some(v => v > 1)) return 1
+  if (all.some(v => v > 0 && v < 1)) return 100
+  return 1
+}
+
+/** First present level among `fields`, brought onto the 0..100 scale. */
+function pickPercent (raw, fields, scale) {
+  for (const field of fields) {
+    const n = numeric(raw[field])
+    if (n !== null && n >= 0) return n * scale
+  }
+  return null
 }
 
 function toEpochMs (value) {
@@ -56,12 +90,11 @@ function findWindow (payload, patterns, depth = 0) {
   return null
 }
 
-function readWindow (payload, aliasKey) {
-  const raw = findWindow(payload, WINDOW_ALIASES[aliasKey])
+function readWindow (raw, scale) {
   if (!raw) return null
 
-  let used = toPercent(raw.utilization ?? raw.used_percent ?? raw.percent_used ?? raw.percentage)
-  const remaining = toPercent(raw.remaining ?? raw.remaining_percent)
+  let used = pickPercent(raw, USED_FIELDS, scale)
+  const remaining = pickPercent(raw, REMAINING_FIELDS, scale)
   if (used === null && remaining !== null) used = 100 - remaining
 
   const resetsAt = toEpochMs(
@@ -174,8 +207,14 @@ class OfficialProvider {
       return { status: 'error', reason: 'bad_payload' }
     }
 
-    const fiveHour = readWindow(payload, 'fiveHour')
-    const sevenDay = readWindow(payload, 'sevenDay')
+    // Both windows are pulled out before either is converted, so the pair can
+    // agree on one scale — a weekly window reading 26 is what proves a 5-hour
+    // window reading 1 is a percentage and not a full tank.
+    const rawFiveHour = findWindow(payload, WINDOW_ALIASES.fiveHour)
+    const rawSevenDay = findWindow(payload, WINDOW_ALIASES.sevenDay)
+    const scale = scaleFor([rawFiveHour, rawSevenDay])
+    const fiveHour = readWindow(rawFiveHour, scale)
+    const sevenDay = readWindow(rawSevenDay, scale)
     if (!fiveHour && !sevenDay) {
       // Endpoint answered but in a shape we do not recognize — treat as a soft
       // failure so the local estimator stays in charge instead of showing 0%.
