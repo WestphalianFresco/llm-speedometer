@@ -138,8 +138,18 @@ class UsageStore {
     }
 
     // No usable anchor. Fall back to a pure local projection, measuring from
-    // the rolled-over window boundary when we know it.
-    const windowStart = rolled && anchor.resetsAt ? anchor.resetsAt : now - span
+    // the most recent reset boundary. A rolled anchor's own resetsAt can be
+    // several cycles behind if the official poll has been throttled for
+    // longer than one window — using it as-is would keep summing spend across
+    // resets that already happened, so the tank would look ever more used
+    // instead of coming back to full when the window actually reopens.
+    let windowStart = now - span
+    let nextResetsAt = anchor ? anchor.resetsAt : null
+    if (rolled && anchor.resetsAt) {
+      const cyclesPassed = Math.floor((now - anchor.resetsAt) / span)
+      windowStart = anchor.resetsAt + cyclesPassed * span
+      nextResetsAt = windowStart + span
+    }
     const spend = this.local.spendSince(windowStart)
 
     if (rate === null) {
@@ -148,7 +158,7 @@ class UsageStore {
         source: 'uncalibrated',
         confidence: 'unknown',
         anchorAt: anchor ? anchor.at : null,
-        resetsAt: rolled ? null : (anchor ? anchor.resetsAt : null),
+        resetsAt: nextResetsAt,
         spend
       }
     }
@@ -157,7 +167,7 @@ class UsageStore {
       source: 'local',
       confidence: 'estimated',
       anchorAt: anchor ? anchor.at : null,
-      resetsAt: rolled ? null : (anchor ? anchor.resetsAt : null),
+      resetsAt: nextResetsAt,
       spend
     }
   }
