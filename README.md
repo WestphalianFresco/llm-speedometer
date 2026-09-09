@@ -9,7 +9,7 @@ Built with Electron. No telemetry, no network calls except one optional
 Anthropic usage lookup described below.
 
 ```
-LLM Speedometer v0.1.0                          🔒  ─  ✕
+LLM Speedometer v0.2.0                          🔒  ─  ✕
 william@example.com
 [Anthropic] [Max 5x] [Opus 5 (1M) ▾]
 C:\Users\you\project
@@ -18,10 +18,13 @@ C:\Users\you\project
      60%               5.1k                93%
                     TOK / MIN
 
-   TRIP   4 2 3 8 4 2 6  TOK     SESSIONS   3 ON OPUS 5
-   ODO  0 2 4 5 5 3 1 6 2 TOK    ● lenovo-64      busy · 1m
-                                 ● gov-bid-est…  shell · 1h 2m
-   ⟳ 1h 41m 21s to reset         ○ on-campus…     idle · 2h 58m
+   TRIP   4 2 3 8 4 2 6  TOK      SESSIONS   3 ON OPUS 5
+   ODO  0 2 4 5 5 3 1 6 2 TOK     ● lenovo-64      busy · 1m
+   ──────────────────────────     ● gov-bid-est…  shell · 1h 2m
+   WEEK 4.8M used · ~32M left     ○ on-campus…     idle · 2h 58m
+   COST $138.70 wk · $24.42 billed
+
+   ⟳ 5H 1h 41m 21s    Week 2d 12h 04m
 ```
 
 ## Providers
@@ -52,6 +55,25 @@ The two providers differ in a way worth knowing:
 
 [1]: https://github.com/anthropics/claude-code/issues/31021
 [2]: https://github.com/anthropics/claude-code/issues/31637
+
+## Minimising
+
+Minimising puts the app in the notification area rather than the taskbar. On
+Windows a tray icon new to the system starts in the overflow flyout — behind
+the chevron, with the "hidden icons" — until it is dragged onto the bar itself.
+Hovering it reports the week's remaining quota, remaining tokens and the live
+rate, so the usual glance needs no window at all; left click brings the window
+back, right click gives Show / Collapse / Refresh / Quit.
+
+The window's own close button does the same thing while the tray icon exists,
+because with somewhere to put it away, closing the window is putting it away
+and not quitting. Quit lives on the tray menu and on the ✕ in the collapsed
+pill. Turning **Minimise to tray** off in settings restores the ordinary
+behaviour — minimise to taskbar, close to exit — and it falls back to that on
+its own where no notification area exists.
+
+Collapsing to the pill is unchanged and is a different gesture: the window
+stays on screen, just small.
 
 ## Install
 
@@ -94,6 +116,50 @@ that is declined, the app degrades to local estimation rather than failing.
   the only version of the metaphor that reads correctly.
 - **ODO / TRIP** — lifetime and current-session tokens, counting
   input + cache writes + output.
+- **WEEK** — the same count restricted to the current weekly window, next to an
+  estimate of what is left of it. See below: the two halves are not the same
+  kind of number.
+- **COST** — what the week's tokens would cost at list price, and — when the
+  account has burned past its plan into usage credits — what was actually
+  charged. On a subscription only the second figure is a bill.
+
+### Why "used" is counted and "left" is estimated
+
+The usage endpoint reports percentages and nothing else. Every `*_dollars`
+field on a quota window comes back `null` on a subscription, and there is no
+token count anywhere in the payload — `/usage` shows percentages for the same
+reason. So the two halves of the WEEK line are obtained differently:
+
+- **used** is counted from the transcripts on this machine. Exact, for this
+  machine.
+- **left** is the endpoint's percentage against a window size *learned* from
+  how many tokens it took to move that percentage. It is marked as an estimate
+  and it is withheld entirely until the window is at least 8% burned and local
+  history covers the whole window — below that, whole-number percentages make
+  the division swing by more than the answer is worth.
+
+They are deliberately not two halves of one subtraction. `left` leans on the
+official percentage, which accounts for work done on other machines; `used` only
+ever reports what these transcripts prove. When they disagree, the gap is real.
+
+Windows are aligned to the reset the endpoint reports (`resets_at - 7d`), not
+to a trailing seven days from now. Those are the same thing only at the instant
+a window resets; the rest of the time a trailing count sweeps in work from the
+*previous* window. On the machine this was developed against, the trailing
+version read 7.17M tokens for a week that had actually used 4.80M.
+
+### Cost tracking without a subscription
+
+A plan has a quota to gauge; an API key has a bill. Prices live in one table
+(`src/providers/pricing.js`) covering every vendor, so the same tokens are
+costed the same way wherever they came from, and the figure is shown directly
+rather than only used internally as a weighting unit. Rates carry the date they
+were last checked, and anything the table gets wrong can be corrected without a
+release by writing `~/.llm-speedometer/pricing.json`:
+
+```json
+{ "anthropic": { "^claude-sonnet-5": { "input": 2, "output": 10 } } }
+```
 - **Needle wander** is cosmetic: a spring simulation with layered noise, so the
   needle breathes like a real gauge. The digital readouts are exact.
 

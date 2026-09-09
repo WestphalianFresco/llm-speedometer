@@ -1,5 +1,7 @@
 'use strict'
-const { app, BrowserWindow, ipcMain, screen, shell, nativeTheme } = require('electron')
+const {
+  app, BrowserWindow, ipcMain, screen, shell, nativeTheme, Tray, Menu, nativeImage
+} = require('electron')
 const fs = require('fs')
 const path = require('path')
 const { UsageStore } = require('./store')
@@ -8,7 +10,10 @@ const { detectVendors } = require('./providers/vendors')
 const { PROVIDERS, findGear, findProvider } = require('./providers/catalog')
 const { CodexStore } = require('./providers/codex')
 
-const NORMAL_SIZE = { width: 470, height: 396 }
+// 432 rather than 396: the odometer housing grew a WEEK/COST strip, and at the
+// old height the footer's two reset countdowns rendered at y=395-408, entirely
+// below the viewport of a window that cannot be resized to reveal them.
+const NORMAL_SIZE = { width: 470, height: 432 }
 // widened when the collapsed pill started carrying the live rate as well as
 // the tank percentage; at 232 the two readouts wrapped and broke the pill
 const MINI_SIZE = { width: 278, height: 54 }
@@ -27,6 +32,10 @@ let win = null
 let store = null
 let mountedVendor = null
 let ticker = null
+let tray = null
+// Closing to the tray means the window's own close is not the app's exit, so
+// the two have to be told apart. Only the tray's Quit and the pill's ✕ set this.
+let quitting = false
 /**
  * Preferences the settings panel owns. They live in the same ui.json as the
  * window state because they are the same kind of thing: how this widget is set
@@ -44,6 +53,11 @@ const DEFAULT_SETTINGS = {
   sound: true,
   volume: 0.8,            // 0 .. 1
   showSessions: true,
+  // Minimising puts it in the notification area rather than the taskbar. On
+  // Windows a fresh tray icon lands in the overflow flyout — the "hidden icons"
+  // chevron — until it is dragged onto the bar, which is exactly where a gauge
+  // you glance at belongs.
+  minimizeToTray: true,
   // the gearbox explains itself once, then stops
   gearboxHintSeen: false
 }
@@ -120,6 +134,7 @@ function coerceSetting (key, value) {
     case 'openAtLogin':
     case 'sound':
     case 'showSessions':
+    case 'minimizeToTray':
     case 'gearboxHintSeen':
       return Boolean(value)
     default:
@@ -140,6 +155,10 @@ function applySettings () {
     win.setOpacity(s.opacity)
     win.setAlwaysOnTop(s.alwaysOnTop, 'floating')
   }
+
+  // The tray menu carries two of these as checkboxes; rebuilding it here is
+  // what keeps them agreeing with the settings panel in both directions.
+  if (tray) tray.setContextMenu(buildTrayMenu())
 
   // Login items are not available in a dev checkout run through electron, and
   // asking anyway throws on some Windows configurations.
@@ -201,6 +220,172 @@ function clampToScreen (x, y, size) {
            y + size.height > a.y && y < a.y + a.height
   })
   return fits ? { x, y } : defaultPosition(size)
+}
+
+// ---------- tray ----------
+
+/**
+ * Bring the window back from the notification area.
+ *
+ * Three different states can land here — hidden, minimised, or merely buried —
+ * and each needs a different call, so all three are made rather than guessed
+ * between. `show()` on an already-visible window is a no-op.
+ */
+function revealWindow () {
+  if (!win || win.isDestroyed()) return createWindow()
+  if (!win.isVisible()) win.show()
+  if (win.isMinimized()) win.restore()
+  win.focus()
+}
+
+function hideToTray () {
+  if (!win || win.isDestroyed()) return
+  win.hide()
+  if (tray) tray.setToolTip(trayTooltip())
+}
+
+/**
+ * What the tray icon says on hover.
+ *
+ * The point of a tray icon is that hovering it answers the question without
+ * reopening anything, so it carries the live reading rather than the app name.
+ */
+function trayTooltip (payload) {
+  const lines = ['LLM Speedometer']
+  try {
+    // Reuses the reading the caller already has where there is one; a hidden
+    // window means push() returned nothing, so then it reads for itself.
+    const d = payload || (store && store.read())
+    if (d) {
+      const week = d.sevenDay && d.sevenDay.percent
+      if (week !== null && week !== undefined) {
+        lines.push('Week: ' + (100 - week).toFixed(0) + '% left')
+      }
+      const budget = d.budget && d.budget.sevenDay
+      if (budget && budget.remainingTokens !== null) {
+        lines.push('~' + formatTokens(budget.remainingTokens) + ' tokens left this week')
+      }
+      lines.push(Math.round(d.tokensPerMinute || 0).toLocaleString('en-US') + ' tok/min')
+    }
+  } catch { /* a tooltip is never worth throwing over */ }
+  return lines.join('\n')
+}
+
+function formatTokens (n) {
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B'
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M'
+  if (n >= 1e3) return Math.round(n / 1e3) + 'k'
+  return String(Math.round(n))
+}
+
+function buildTrayMenu () {
+  return Menu.buildFromTemplate([
+    { label: 'Show dashboard', click: revealWindow },
+    {
+      label: 'Collapse to pill',
+      click: () => {
+        revealWindow()
+        setMini(true)
+      }
+    },
+    { type: 'separator' },
+    { label: 'Refresh now', click: () => { refreshNow().catch(() => {}) } },
+    {
+      label: 'Always on top',
+      type: 'checkbox',
+      checked: uiState.settings.alwaysOnTop,
+      click: menuItem => {
+        uiState.settings.alwaysOnTop = menuItem.checked
+        saveUiState()
+        applySettings()
+        push()
+      }
+    },
+    {
+      label: 'Minimise to tray',
+      type: 'checkbox',
+      checked: uiState.settings.minimizeToTray,
+      click: menuItem => {
+        uiState.settings.minimizeToTray = menuItem.checked
+        saveUiState()
+        push()
+      }
+    },
+    { type: 'separator' },
+    {
+      label: 'Quit',
+      click: () => {
+        quitting = true
+        app.quit()
+      }
+    }
+  ])
+}
+
+/**
+ * The notification-area icon, sized for the platform that will draw it.
+ *
+ * macOS asks for 16pt and then draws it at the screen's scale factor, so a lone
+ * 16px raster is half the pixels a Retina menu bar wants and arrives visibly
+ * soft. Handing it both representations lets it pick the right one.
+ *
+ * It is deliberately NOT marked as a template image. A template uses only the
+ * alpha channel, and this icon is a gauge face — about 70% of it is opaque — so
+ * templating would collapse the whole dial to one filled disc and throw away
+ * the thing that makes it recognisable. The cost is that it does not invert
+ * between light and dark menu bars, which for a colour instrument face is the
+ * better trade.
+ */
+function trayIcon () {
+  const base = nativeImage.createFromPath(ICON_PATH)
+  if (base.isEmpty()) return nativeImage.createEmpty()
+
+  if (process.platform !== 'darwin') return base.resize({ width: 16, height: 16 })
+
+  const image = nativeImage.createEmpty()
+  image.addRepresentation({
+    scaleFactor: 1, buffer: base.resize({ width: 16, height: 16 }).toPNG()
+  })
+  image.addRepresentation({
+    scaleFactor: 2, buffer: base.resize({ width: 32, height: 32 }).toPNG()
+  })
+  return image
+}
+
+function createTray () {
+  if (tray) return
+
+  // The shipped icon is 256px so one file can serve the installer, the taskbar
+  // and here. Both platforms want it much smaller, and neither scales it well
+  // from 256 on its own — Windows smears the needle, macOS blurs it — so it is
+  // resized here rather than left to them.
+  const image = trayIcon()
+
+  try {
+    tray = new Tray(image)
+  } catch {
+    // No notification area (some Linux sessions). Minimising then has to keep
+    // meaning the taskbar, or the window would vanish with no way back.
+    tray = null
+    return
+  }
+
+  tray.setToolTip(trayTooltip())
+  tray.setContextMenu(buildTrayMenu())
+  // Left click reopens; right click is the menu, which Electron wires itself.
+  tray.on('click', revealWindow)
+  tray.on('double-click', revealWindow)
+}
+
+/** Collapse or expand the pill. Shared by the IPC handler and the tray menu. */
+function setMini (mini) {
+  if (!win || win.isDestroyed()) return
+  uiState.mini = mini
+  const size = mini ? MINI_SIZE : NORMAL_SIZE
+  const [x, y] = win.getPosition()
+  win.setBounds({ ...clampToScreen(x, y, size), ...size }, true)
+  saveUiState()
+  push()
 }
 
 function createWindow () {
@@ -267,6 +452,36 @@ function createWindow () {
     saveUiState()
   })
 
+  // The app's own minimise button never reaches this handler — ui:minimize
+  // hides directly — so this is here for the OS gestures that also minimise:
+  // Win+D, the taskbar preview, the window menu.
+  //
+  // It does not intercept, because 'minimize' cannot be intercepted. Electron
+  // declares the listener with no event argument at all; it synthesises one, so
+  // calling preventDefault() on it neither throws nor does anything, and the
+  // window is already minimised by the time this runs. An earlier version of
+  // this handler called it and claimed in a comment to have cancelled the
+  // minimise. Reveal puts both back (show() then restore()), which is what
+  // makes finishing the job here safe rather than merely tidy.
+  //
+  // On macOS a miniaturised window belongs in the Dock, and dragging one back
+  // out of an animation it has already begun purely to hide it plays two
+  // dismissals for one keystroke. There the platform gesture is left alone.
+  win.on('minimize', () => {
+    if (process.platform === 'darwin') return
+    if (!tray || !uiState.settings.minimizeToTray) return
+    hideToTray()
+  })
+
+  // Same for the frame's close: with a tray icon present, closing the window is
+  // putting it away, not quitting. Quit lives on the tray menu and on the ✕ in
+  // the collapsed pill, both of which set `quitting` first.
+  win.on('close', event => {
+    if (quitting || !tray || !uiState.settings.minimizeToTray) return
+    event.preventDefault()
+    hideToTray()
+  })
+
   // Nothing in this widget should ever navigate or spawn a window.
   win.webContents.setWindowOpenHandler(({ url }) => {
     openExternal(url)
@@ -303,7 +518,7 @@ function mountStore (vendorId) {
 }
 
 function push () {
-  if (!win || win.isDestroyed()) return
+  if (!win || win.isDestroyed()) return null
   const payload = store.read()
   win.webContents.send('usage:update', {
     ...payload,
@@ -321,6 +536,9 @@ function push () {
     darkMode: nativeTheme.shouldUseDarkColors,
     canOpenAtLogin: app.isPackaged
   })
+  // Handed back so a caller that also needs the reading — the tray tooltip —
+  // can use this one rather than running the whole read a second time.
+  return payload
 }
 
 async function tick () {
@@ -330,12 +548,28 @@ async function tick () {
   if (Date.now() >= store.official.nextPollAt()) {
     await store.pollOfficial()
   }
-  push()
+  const payload = push()
+  // Kept current even while hidden — the tooltip is the whole interface when
+  // the window is put away, so it cannot be updated only on reveal.
+  if (tray) tray.setToolTip(trayTooltip(payload))
 }
 
 function startTicker () {
   if (ticker) clearInterval(ticker)
   ticker = setInterval(() => { tick().catch(() => {}) }, LOCAL_TICK_MS)
+}
+
+/**
+ * A refresh the user asked for, from the pill's button or the tray menu.
+ *
+ * `force` skips this app's own comfortable interval but still respects the
+ * provider's hard floor, so impatient clicking cannot dig a 429 hole.
+ */
+async function refreshNow () {
+  store.refreshLocal()
+  await store.pollOfficial({ force: true })
+  const payload = push()
+  if (tray) tray.setToolTip(trayTooltip(payload))
 }
 
 // ---------- IPC ----------
@@ -476,39 +710,32 @@ handleUi('ui:open-vendor', async vendorId => {
 
 // A manual refresh may skip the comfortable interval but still cannot dip
 // under the provider's hard floor, so impatient clicking cannot dig a 429 hole.
-onUi('ui:refresh', () => {
-  ;(async () => {
-    store.refreshLocal()
-    await store.pollOfficial({ force: true })
-    push()
-  })().catch(() => {})
+onUi('ui:refresh', () => { refreshNow().catch(() => {}) })
+
+onUi('ui:close', () => {
+  quitting = true
+  app.quit()
 })
 
-onUi('ui:close', () => app.quit())
-
-// Minimising is the window going to the taskbar. Collapsing to the pill is a
+// Minimising is the window going away to the notification area (or the taskbar
+// when the tray is unavailable or switched off). Collapsing to the pill is a
 // different thing entirely and has its own control.
 onUi('ui:minimize', () => {
-  if (win && !win.isDestroyed()) win.minimize()
+  if (!win || win.isDestroyed()) return
+  if (tray && uiState.settings.minimizeToTray) hideToTray()
+  else win.minimize()
 })
 
-onUi('ui:mini', mini => {
-  if (!win || win.isDestroyed()) return
-  uiState.mini = mini
-  const size = mini ? MINI_SIZE : NORMAL_SIZE
-  const [x, y] = win.getPosition()
-  win.setBounds({ ...clampToScreen(x, y, size), ...size }, true)
-  saveUiState()
-})
+onUi('ui:mini', mini => setMini(mini))
 
 // ---------- lifecycle ----------
 
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
-  app.on('second-instance', () => {
-    if (win && !win.isDestroyed()) { win.show(); win.focus() }
-  })
+  // Launching it again while it sits in the tray should bring it back rather
+  // than do nothing, which is what an unnoticed hidden window looks like.
+  app.on('second-instance', revealWindow)
 
   app.whenReady().then(() => {
     // Without this Windows groups the window under whatever it infers from the
@@ -522,18 +749,25 @@ if (!app.requestSingleInstanceLock()) {
     // than flashing the system one and correcting itself
     nativeTheme.themeSource = uiState.settings.theme
     createWindow()
+    createTray()
     applySettings()
     startTicker()
 
-    app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow()
-    })
+    app.on('activate', revealWindow)
   })
 
-  app.on('window-all-closed', () => app.quit())
+  // With a tray icon the app outlives its window on purpose — that is what
+  // "minimise to the notification area" means. Without one there is nothing
+  // left to click, so closing the last window really is the end.
+  app.on('window-all-closed', () => {
+    if (!tray || !uiState.settings.minimizeToTray) app.quit()
+  })
+
   app.on('before-quit', () => {
+    quitting = true
     if (ticker) clearInterval(ticker)
     if (store) store.save()
     saveUiState()
+    if (tray) { tray.destroy(); tray = null }
   })
 }

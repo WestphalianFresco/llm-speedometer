@@ -1156,8 +1156,14 @@ body.mini .gearbox { display: none; }
    recessed housing, lit across the middle and falling into shadow top and
    bottom the way a real rotating wheel does. Digits are zero-padded to a fixed
    width so the reading never reflows as it climbs. */
+/* The card is one big drag region and -webkit-app-region does not inherit, so a
+   child left at the initial `none` still sits inside the parent's drag surface
+   and never sees a hover — which is why the housing's tooltips could not be
+   shown. `no-drag` is how the footer's diagnostics readout already opts out;
+   the odometer carries three explanations of its own and needs the same. */
 .odo {
   flex: 0 0 auto;
+  -webkit-app-region: no-drag;
   padding: 7px 9px;
   border-radius: 7px;
   background: linear-gradient(180deg, #14120e, #1e1a14);
@@ -1238,6 +1244,48 @@ body.mini .gearbox { display: none; }
   letter-spacing: var(--ls-caps);
   color: var(--tick);
 }
+
+/* Printed rather than drummed.
+   The drums are for quantities that only ever climb; what is left of a window
+   changes direction and carries a unit, so a rolling digit would be both the
+   wrong metaphor and far too wide. It sits inside the same housing below a
+   hairline, so it still reads as part of the one instrument.
+   Colours are literal here rather than themed: the housing is dark in both
+   palettes, so a token that flips with the theme would go invisible in one. */
+.odo-meta {
+  margin-top: 3px;
+  padding-top: 5px;
+  border-top: 1px solid rgba(255,255,255,.08);
+  display: flex; flex-direction: column; gap: 3px;
+}
+
+.odo-meta-row { display: flex; align-items: baseline; gap: 5px; }
+
+.odo-meta-label {
+  flex: none;
+  width: 26px;
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--ls-caps);
+  color: var(--tick);
+}
+
+.odo-meta-val {
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: #C8BFA9;
+  white-space: nowrap;
+}
+
+/* Anything derived from a percentage rather than counted is dimmed, so the
+   estimate never passes for the measurement standing next to it. */
+.odo-meta-val.est { color: #8E8676; }
+.odo-meta-val.billed { color: #D9A441; }
+
+.odo-meta-sep { font-size: var(--fs-xs); color: #5C564A; }
+
+/* Nothing charged, nothing to say. */
+.odo-meta-row.empty { display: none; }
 
 /* ---------- footer ---------- */
 

@@ -35,6 +35,13 @@ const nodes = {
   lockOpen: el('lock-open'),
   odoTotal: el('odo-total'),
   odoTrip: el('odo-trip'),
+  weekRow: el('week-row'),
+  weekUsed: el('week-used'),
+  weekLeft: el('week-left'),
+  costRow: el('cost-row'),
+  costWeek: el('cost-week'),
+  costSep: el('cost-sep'),
+  costBilled: el('cost-billed'),
   btnCloseMini: el('btn-close-mini'),
   miniPct: el('mini-pct'),
   miniRate: el('mini-rate-val')
@@ -1218,12 +1225,140 @@ function paintDrum (container, value, width) {
   drumState.set(container.id, text)
 }
 
+/**
+ * 4,798,275 -> "4.8M". Compact enough for a strip the width of the housing.
+ *
+ * The band edges account for the rounding that follows them rather than sitting
+ * on the round number itself: 999,800 rounded to one decimal in millions is
+ * "1.0", so testing `>= 1e6` printed it as "1000k" — the one output the next
+ * band up exists to prevent. Each threshold is therefore the value that would
+ * round up into the band above.
+ */
+function compactTokens (n) {
+  if (n === null || n === undefined || !Number.isFinite(n)) return null
+  const abs = Math.abs(n)
+  if (abs >= 9.95e8) return (n / 1e9).toFixed(2).replace(/\.?0+$/, '') + 'B'
+  if (abs >= 9.95e5) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M'
+  if (abs >= 999.5) return Math.round(n / 1e3) + 'k'
+  return String(Math.round(n))
+}
+
+const money = n =>
+  '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+/**
+ * The week in tokens, and what it costs.
+ *
+ * `used` is counted from transcripts and `left` is derived from the official
+ * percentage, so they are marked differently on purpose — one is a measurement,
+ * the other an estimate standing on a whole-number percentage. Until the
+ * endpoint has reported enough of a window to divide by, `left` says so rather
+ * than showing a number that would move by half on the next poll.
+ */
+function renderWeekMeta (data) {
+  const budget = data.budget && data.budget.sevenDay
+  const nl = String.fromCharCode(10)
+
+  if (!budget) {
+    nodes.weekUsed.textContent = '—'
+    nodes.weekLeft.textContent = ''
+    return
+  }
+
+  nodes.weekUsed.textContent = (compactTokens(budget.usedTokens) || '0') + ' used'
+
+  const left = compactTokens(budget.remainingTokens)
+  nodes.weekLeft.textContent = left ? '~' + left + ' left' : 'calibrating'
+
+  const week = data.sevenDay || {}
+  const lines = []
+  lines.push('THIS WEEK')
+  lines.push('  used      ' + budget.usedTokens.toLocaleString('en-US') + ' tokens (' +
+    budget.turns.toLocaleString('en-US') + ' turns), counted from transcripts')
+  lines.push('  left      ' + (budget.remainingTokens === null
+    ? 'needs ' + 8 + '%+ of a fully covered window to estimate'
+    : '~' + Math.round(budget.remainingTokens).toLocaleString('en-US') + ' tokens'))
+  if (budget.capacityTokens !== null) {
+    lines.push('  window    ~' + Math.round(budget.capacityTokens).toLocaleString('en-US') +
+      ' tokens total, implied by ' +
+      (week.percent === null ? '?' : week.percent.toFixed(0)) + '% used')
+  }
+  lines.push('  opened    ' + new Date(budget.windowStart).toLocaleString())
+  lines.push('  resets    ' + (budget.resetsAt
+    ? new Date(budget.resetsAt).toLocaleString()
+    : 'unknown until the next official poll'))
+  if (budget.covered < 0.98) {
+    lines.push('  coverage  local history covers only ' +
+      (budget.covered * 100).toFixed(0) + '% of this window')
+  }
+  lines.push('')
+  lines.push('The usage endpoint reports a percentage and no token count at all,')
+  lines.push('so "left" is that percentage against a window size learned from')
+  lines.push('what this machine burned to move it. "used" is counted, not inferred.')
+  nodes.weekRow.title = lines.join(nl)
+}
+
+/**
+ * Dollars.
+ *
+ * On a subscription these are the internal weighting unit surfaced honestly —
+ * what the week's tokens would cost at list price — which is the only figure
+ * that means anything to someone metering an API key rather than a plan. The
+ * `billed` half is different in kind: credits the endpoint says were actually
+ * charged past the plan's limits, so it is the one number here that is a bill.
+ */
+function renderCost (data) {
+  const cost = data.cost
+  if (!cost) {
+    nodes.costRow.classList.add('empty')
+    return
+  }
+  nodes.costRow.classList.remove('empty')
+  nodes.costWeek.textContent = money(cost.sevenDay || 0) + ' wk'
+
+  const billed = cost.official && cost.official.usedUsd
+  const showBilled = Boolean(billed && billed > 0)
+  nodes.costSep.hidden = !showBilled
+  nodes.costBilled.hidden = !showBilled
+  if (showBilled) nodes.costBilled.textContent = money(billed) + ' billed'
+
+  const nl = String.fromCharCode(10)
+  const lines = []
+  lines.push('COST')
+  lines.push('  this week ' + money(cost.sevenDay || 0) + ' at list price')
+  lines.push('  5-hour    ' + money(cost.fiveHour || 0))
+  if (cost.lifetime !== null && cost.lifetime !== undefined) {
+    lines.push('  lifetime  ' + money(cost.lifetime))
+  }
+  if (showBilled) {
+    lines.push('  billed    ' + money(billed) + ' in usage credits, charged past the plan' +
+      (cost.official.limitUsd ? ' (limit ' + money(cost.official.limitUsd) + ')' : ''))
+  }
+  lines.push('')
+  if (showBilled) {
+    lines.push('"billed" comes from the account and is real money.')
+  }
+  lines.push('The rest is what these tokens would cost at list price — a')
+  lines.push('subscription is not charged per token, so on a plan it is a')
+  lines.push('measure of the work done, not an invoice.')
+  if (cost.pricing) {
+    lines.push('')
+    lines.push('Prices checked ' + cost.pricing.asOf +
+      (cost.pricing.overridden ? ' · overridden locally' : ''))
+    lines.push('Override at ' + cost.pricing.overrideFile)
+  }
+  nodes.costRow.title = lines.join(nl)
+}
+
 function renderOdometer (data) {
   const odo = data.odometer
   if (!odo) return
 
   paintDrum(nodes.odoTrip, odo.trip, TRIP_DIGITS)
   paintDrum(nodes.odoTotal, odo.total, ODO_DIGITS)
+
+  renderWeekMeta(data)
+  renderCost(data)
 
   const nl = String.fromCharCode(10)
   el('odo').title = [
@@ -1262,6 +1397,20 @@ function buildTooltip (data) {
   const rate = data.quotaRate || {}
   lines.push('5-hour local burn     ' + quotaShare(data.spend.fiveHour, rate.fiveHour))
   lines.push('Weekly local burn     ' + quotaShare(data.spend.sevenDay, rate.sevenDay))
+  const week = data.budget && data.budget.sevenDay
+  if (week) {
+    lines.push('Weekly tokens used    ' + week.usedTokens.toLocaleString('en-US'))
+    lines.push('Weekly tokens left    ' + (week.remainingTokens === null
+      ? 'not enough of the window burned to estimate'
+      : '~' + Math.round(week.remainingTokens).toLocaleString('en-US') +
+        ' (' + week.confidence + ')'))
+  }
+  // The per-model weekly cap fills separately and can stop you while the
+  // all-model week still looks open, so it is reported even without a gauge.
+  if (data.weeklyScoped && data.weeklyScoped.percent !== null) {
+    lines.push('Weekly cap' + (data.weeklyScoped.scope ? ' (' + data.weeklyScoped.scope + ')' : '') +
+      '  ' + data.weeklyScoped.percent.toFixed(0) + '% used')
+  }
   lines.push('Local records         ' + data.localEvents)
   // Spelled out because the footer can only count down one window at a time,
   // and which one it picked is otherwise invisible.
@@ -2218,6 +2367,7 @@ const setNodes = {
   volume: el('set-volume'),
   volumeVal: el('set-volume-val'),
   ontop: el('set-ontop'),
+  tray: el('set-tray'),
   login: el('set-login'),
   loginNote: el('set-login-note'),
   source: el('set-source'),
@@ -2265,6 +2415,7 @@ function renderSettings (data) {
   setToggle(setNodes.sessions, s.showSessions)
   setToggle(setNodes.sound, s.sound)
   setToggle(setNodes.ontop, s.alwaysOnTop)
+  setToggle(setNodes.tray, s.minimizeToTray)
   setToggle(setNodes.login, s.openAtLogin)
 
   // Registering a login item only means anything for an installed copy; say so
@@ -2333,6 +2484,7 @@ const toggleSetting = (node, key) => node.addEventListener('click', () => {
 toggleSetting(setNodes.sessions, 'showSessions')
 toggleSetting(setNodes.sound, 'sound')
 toggleSetting(setNodes.ontop, 'alwaysOnTop')
+toggleSetting(setNodes.tray, 'minimizeToTray')
 toggleSetting(setNodes.login, 'openAtLogin')
 
 setNodes.switch.addEventListener('click', () => {

@@ -4,8 +4,10 @@ const os = require('os')
 const path = require('path')
 
 const { codexSessions } = require('./paths')
+const { costOfTokens, priceMeta } = require('./pricing')
 
 const RATE_WINDOW_MS = 10 * 60 * 1000
+const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
 // A rollout whose file has not been touched in this long is treated as idle
 // rather than actively working. Codex writes no liveness record of its own.
 const BUSY_WINDOW_MS = 90 * 1000
@@ -197,6 +199,85 @@ class CodexStore {
     return this.rollouts.length ? this.rollouts[this.rollouts.length - 1] : null
   }
 
+  /**
+   * Tokens, turns and dollars inside an explicit window.
+   *
+   * Codex's rate_limits give a percentage and nothing else, exactly as
+   * Anthropic's endpoint does, so the same trick applies: measure the tokens
+   * locally, divide by the share of the window they represent, and the quotient
+   * is a capacity. Each rollout's model prices its own turns — a session run on
+   * a mini model must not be costed at the flagship rate.
+   */
+  windowTally (fromMs, toMs = Date.now()) {
+    let tokens = 0
+    let cost = 0
+    let turns = 0
+    let oldest = null
+
+    for (const r of this.rollouts) {
+      const model = r.parsed.model
+      for (const e of r.parsed.events) {
+        if (oldest === null || e.ts < oldest) oldest = e.ts
+        if (e.ts < fromMs || e.ts > toMs) continue
+        // Same definition as the odometer: fed plus produced, cached reads out.
+        tokens += (e.input || 0) + (e.cacheWrite || 0) + (e.output || 0)
+        cost += costOfTokens({
+          input: e.input || 0,
+          output: e.output || 0,
+          cachedInput: e.cachedInput || 0,
+          cacheWrite: e.cacheWrite || 0
+        }, model, 'openai')
+        turns++
+      }
+    }
+
+    const span = Math.max(1, toMs - fromMs)
+    // Codex keeps rollouts indefinitely, so coverage is bounded by how far back
+    // the transcripts themselves go rather than by a retention policy.
+    const horizon = oldest === null ? toMs : Math.max(fromMs, Math.min(oldest, toMs))
+    return {
+      tokens,
+      cost,
+      turns,
+      from: fromMs,
+      to: toMs,
+      covered: Math.min(1, Math.max(0, (toMs - horizon) / span))
+    }
+  }
+
+  /** A window in tokens, mirroring UsageStore._budget so one renderer fits both. */
+  budgetFor (window, spanMs) {
+    const now = Date.now()
+    const start = window && window.resetsAt
+      ? Math.min(window.resetsAt - spanMs, now)
+      : now - spanMs
+    const tally = this.windowTally(start, now)
+    const percent = window ? window.percent : null
+
+    const base = {
+      windowStart: start,
+      resetsAt: window ? window.resetsAt : null,
+      usedTokens: tally.tokens,
+      usedCost: tally.cost,
+      turns: tally.turns,
+      covered: tally.covered
+    }
+
+    // Same floors as the Anthropic store: below 8% the division turns rounding
+    // into noise, and a window local history does not cover implies a capacity
+    // far too small.
+    if (percent === null || percent < 8 || tally.covered < 0.98 || tally.tokens <= 0) {
+      return { ...base, capacityTokens: null, remainingTokens: null, confidence: 'unknown' }
+    }
+    const capacityTokens = tally.tokens / (percent / 100)
+    return {
+      ...base,
+      capacityTokens,
+      remainingTokens: Math.max(0, capacityTokens * (100 - percent) / 100),
+      confidence: 'measured'
+    }
+  }
+
   odometer () {
     let total = 0
     let turns = 0
@@ -279,13 +360,42 @@ class CodexStore {
     const shortWindow = secondary || (primary && primary.window_minutes < 1440 ? primary : null)
 
     const odo = this.odometer()
+    const fiveHour = windowFrom(shortWindow, '5-hour')
+    const sevenDay = windowFrom(weekly, 'This week')
+
+    const shortSpan = shortWindow && shortWindow.window_minutes
+      ? shortWindow.window_minutes * 60 * 1000
+      : 5 * 60 * 60 * 1000
+    const weeklySpan = weekly && weekly.window_minutes
+      ? weekly.window_minutes * 60 * 1000
+      : SEVEN_DAYS_MS
+
+    const fiveHourTally = this.windowTally(Date.now() - shortSpan)
+    const sevenDayTally = this.windowTally(Date.now() - weeklySpan)
+    const lifetime = this.windowTally(0)
 
     return {
       at: now,
       vendorId: 'openai',
-      fiveHour: windowFrom(shortWindow, '5-hour'),
-      sevenDay: windowFrom(weekly, 'This week'),
-      spend: { fiveHour: 0, sevenDay: 0 },
+      fiveHour,
+      sevenDay,
+      spend: { fiveHour: fiveHourTally.cost, sevenDay: sevenDayTally.cost },
+      budget: {
+        fiveHour: this.budgetFor(fiveHour, shortSpan),
+        sevenDay: this.budgetFor(sevenDay, weeklySpan),
+        lifetime: { usedTokens: odo.total, turns: odo.turns }
+      },
+      // ChatGPT plans bill a flat subscription, so these dollars are what the
+      // same tokens would have cost on the API — a scale for the work done, not
+      // an invoice. On an API key it is the invoice.
+      cost: {
+        fiveHour: fiveHourTally.cost,
+        sevenDay: sevenDayTally.cost,
+        lifetime: lifetime.cost,
+        official: null,
+        pricing: priceMeta('openai')
+      },
+      weeklyScoped: null,
       tokensPerMinute: this.ratePerMinute(),
       calibrated: Boolean(primary),
       official: {

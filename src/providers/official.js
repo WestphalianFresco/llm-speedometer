@@ -105,6 +105,108 @@ function readWindow (raw, scale) {
   return { usedPercent: Math.min(100, Math.max(0, used)), resetsAt }
 }
 
+/**
+ * The `limits` array, which is the shape `/usage` itself renders.
+ *
+ * The endpoint answers with both shapes: the older top-level `five_hour` /
+ * `seven_day` objects, and this array. The array is preferred because it is
+ * strictly richer — every entry is already a plain 0..100 `percent`, so none of
+ * the scale guessing above applies to it, and it carries the per-model weekly
+ * cap that has no top-level equivalent at all. That cap is a real limit you can
+ * hit while the all-model weekly window still looks half full, and reading only
+ * the top-level keys meant this app could not see it coming.
+ *
+ * `kind` is an open set. Anything unrecognised is ignored rather than guessed
+ * at, and the legacy keys still answer for the two windows that matter most.
+ */
+const LIMIT_KINDS = {
+  session: 'fiveHour',
+  five_hour: 'fiveHour',
+  weekly_all: 'sevenDay',
+  seven_day: 'sevenDay',
+  weekly_scoped: 'weeklyScoped'
+}
+
+function scopeLabel (scope) {
+  if (!scope || typeof scope !== 'object') return null
+  const model = scope.model && (scope.model.display_name || scope.model.id)
+  const surface = typeof scope.surface === 'string'
+    ? scope.surface
+    : scope.surface && scope.surface.display_name
+  return [model, surface].filter(Boolean).join(' · ') || null
+}
+
+function readLimits (payload) {
+  const list = payload && Array.isArray(payload.limits) ? payload.limits : null
+  if (!list) return null
+
+  const out = {}
+  for (const entry of list) {
+    if (!entry || typeof entry !== 'object') continue
+    const key = LIMIT_KINDS[String(entry.kind || '').toLowerCase()]
+    if (!key) continue
+    const percent = numeric(entry.percent)
+    if (percent === null || percent < 0) continue
+
+    const reading = {
+      usedPercent: Math.min(100, Math.max(0, percent)),
+      resetsAt: toEpochMs(entry.resets_at),
+      severity: typeof entry.severity === 'string' ? entry.severity : null,
+      scope: scopeLabel(entry.scope)
+    }
+    // Several scoped caps can be in flight at once, one per model. Only the
+    // tightest is worth a gauge — it is the one that will stop you first.
+    if (!out[key] || reading.usedPercent > out[key].usedPercent) out[key] = reading
+  }
+  return Object.keys(out).length ? out : null
+}
+
+/**
+ * Money actually owed, as opposed to quota consumed.
+ *
+ * Every `*_dollars` field on the quota windows comes back null on a
+ * subscription — the plan is not metered in dollars, so there is nothing to
+ * report there and no amount of parsing will produce one. What IS real is
+ * `spend`: usage credits burned past the plan's limits, in minor units with an
+ * explicit exponent. For anyone off a subscription that is the entire meter,
+ * and for anyone on one it is the part of the month that actually costs money.
+ */
+function readSpend (payload) {
+  if (!payload || typeof payload !== 'object') return null
+
+  const spend = payload.spend
+  if (spend && spend.used && numeric(spend.used.amount_minor) !== null) {
+    const exponent = numeric(spend.used.exponent)
+    const divisor = Math.pow(10, exponent === null ? 2 : exponent)
+    const limitMinor = spend.limit && numeric(spend.limit.amount_minor)
+    return {
+      usedUsd: spend.used.amount_minor / divisor,
+      limitUsd: limitMinor === null || limitMinor === undefined ? null : limitMinor / divisor,
+      currency: spend.used.currency || 'USD',
+      enabled: spend.enabled !== false,
+      percent: numeric(spend.percent)
+    }
+  }
+
+  // Older payloads carry the same number under extra_usage, as credits in minor
+  // units with the exponent stated separately.
+  const extra = payload.extra_usage
+  if (extra && numeric(extra.used_credits) !== null) {
+    const places = numeric(extra.decimal_places)
+    const divisor = Math.pow(10, places === null ? 2 : places)
+    const limit = numeric(extra.monthly_limit)
+    return {
+      usedUsd: extra.used_credits / divisor,
+      limitUsd: limit === null ? null : limit / divisor,
+      currency: extra.currency || 'USD',
+      enabled: extra.is_enabled !== false,
+      percent: numeric(extra.utilization)
+    }
+  }
+
+  return null
+}
+
 class OfficialProvider {
   constructor () {
     this.backoffIndex = -1        // -1 == healthy
@@ -213,8 +315,16 @@ class OfficialProvider {
     const rawFiveHour = findWindow(payload, WINDOW_ALIASES.fiveHour)
     const rawSevenDay = findWindow(payload, WINDOW_ALIASES.sevenDay)
     const scale = scaleFor([rawFiveHour, rawSevenDay])
-    const fiveHour = readWindow(rawFiveHour, scale)
-    const sevenDay = readWindow(rawSevenDay, scale)
+
+    // The limits array wins where it answers: its percentages need no scale
+    // inference, and it is the same list `/usage` prints. The legacy keys fill
+    // any gap so an older payload still drives both gauges.
+    const limits = readLimits(payload) || {}
+    const fiveHour = limits.fiveHour || readWindow(rawFiveHour, scale)
+    const sevenDay = limits.sevenDay || readWindow(rawSevenDay, scale)
+    const weeklyScoped = limits.weeklyScoped || null
+    const spend = readSpend(payload)
+
     if (!fiveHour && !sevenDay) {
       // Endpoint answered but in a shape we do not recognize — treat as a soft
       // failure so the local estimator stays in charge instead of showing 0%.
@@ -227,8 +337,15 @@ class OfficialProvider {
     }
 
     this._succeed()
-    return { status: 'ok', at: Date.now(), fiveHour, sevenDay }
+    return { status: 'ok', at: Date.now(), fiveHour, sevenDay, weeklyScoped, spend }
   }
 }
 
-module.exports = { OfficialProvider, ENDPOINT, MIN_INTERVAL_MS, BASE_INTERVAL_MS }
+module.exports = {
+  OfficialProvider,
+  ENDPOINT,
+  MIN_INTERVAL_MS,
+  BASE_INTERVAL_MS,
+  readLimits,
+  readSpend
+}

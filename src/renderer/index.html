@@ -148,6 +148,11 @@
             <button class="toggle" id="set-ontop" role="switch"><span></span></button>
           </div>
           <div class="set-row">
+            <span class="set-label">Minimise to tray
+              <em>and close to tray; quit from the tray menu</em></span>
+            <button class="toggle" id="set-tray" role="switch"><span></span></button>
+          </div>
+          <div class="set-row">
             <span class="set-label">Start with Windows
               <em id="set-login-note">available in the installed app</em></span>
             <button class="toggle" id="set-login" role="switch"><span></span></button>
@@ -290,7 +295,7 @@
           <button class="ctl" id="btn-lock" title="Lock / switch provider">&#128274;</button>
           <button class="ctl" id="btn-refresh" title="Refresh">&#10227;</button>
           <button class="ctl" id="btn-collapse" title="Collapse to the pill">&#9647;</button>
-          <button class="ctl" id="btn-min" title="Minimize to the taskbar">&#9472;</button>
+          <button class="ctl" id="btn-min" title="Minimize to the notification area">&#9472;</button>
           <button class="ctl ctl-close" id="btn-close" title="Close">&#10005;</button>
         </div>
       </div>
@@ -340,6 +345,26 @@
           <span class="odo-label">ODO</span>
           <span class="odo-drum" id="odo-total"></span>
           <span class="odo-unit">TOK</span>
+        </div>
+
+        <!-- The drums count tokens without bound. These two lines put the
+             current week's slice of that against what is left of it — the
+             reading /usage gives only as a bare percentage — and then what the
+             same work costs, which is the only meter that means anything
+             without a subscription behind it. -->
+        <div class="odo-meta">
+          <div class="odo-meta-row" id="week-row">
+            <span class="odo-meta-label">WEEK</span>
+            <span class="odo-meta-val" id="week-used">&#8212;</span>
+            <span class="odo-meta-sep">&#183;</span>
+            <span class="odo-meta-val est" id="week-left">&#8212;</span>
+          </div>
+          <div class="odo-meta-row" id="cost-row">
+            <span class="odo-meta-label">COST</span>
+            <span class="odo-meta-val" id="cost-week">&#8212;</span>
+            <span class="odo-meta-sep" id="cost-sep" hidden>&#183;</span>
+            <span class="odo-meta-val billed" id="cost-billed" hidden>&#8212;</span>
+          </div>
         </div>
       </div>
 
