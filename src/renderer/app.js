@@ -395,10 +395,18 @@ function applyNeedle (key, value) {
 }
 
 let lastFrame = 0
+let lastPaint = 0
+// The needles are SVG children, which never get a compositor layer of their
+// own, so every transform write re-rasters the dial underneath. While the
+// wander runs that is 60 repaints a second. Writing every other display frame
+// halves that bill; the spring and the wander clock still step every frame.
+const PAINT_MS = 30
 
 function frame (now) {
   const dt = lastFrame ? Math.min((now - lastFrame) / 1000, 0.05) : 0.016
   lastFrame = now
+  const paint = now - lastPaint >= PAINT_MS
+  if (paint) lastPaint = now
 
   for (const key of DIAL_KEYS) {
     const s = dialState[key]
@@ -418,7 +426,7 @@ function frame (now) {
       shown += (wander + s.drift * 4) * s.amplitude
     }
 
-    if (cluster[key] && cluster[key].needle) {
+    if (paint && cluster[key] && cluster[key].needle) {
       const value = Math.min(DIALS[key].max, Math.max(0, shown))
       applyNeedle(key, value)
       // during a blip the digits follow the needle, so the two never disagree
