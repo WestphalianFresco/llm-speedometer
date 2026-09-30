@@ -15,7 +15,8 @@
   },
   "devDependencies": {
     "electron": "^33.0.0",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "rcedit": "^5.0.2"
   },
   "build": {
     "appId": "dev.williamfan.llmspeedometer",
@@ -23,10 +24,11 @@
     "files": [
       "src/**/*",
       "build/icon.png",
+      "build/icon.ico",
       "package.json"
     ],
     "win": {
-      "icon": "build/icon.png",
+      "icon": "build/icon.ico",
       "target": [
         "nsis",
         "portable"
@@ -58,6 +60,7 @@
         "from": "build/com.williamfan.llmmeter.streamDeckPlugin",
         "to": "com.williamfan.llmmeter.streamDeckPlugin"
       }
-    ]
+    ],
+    "afterPack": "scripts/after-pack.js"
   }
 }

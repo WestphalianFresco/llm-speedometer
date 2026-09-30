@@ -56,6 +56,14 @@ The two providers differ in a way worth knowing:
 [1]: https://github.com/anthropics/claude-code/issues/31021
 [2]: https://github.com/anthropics/claude-code/issues/31637
 
+## Resizing
+
+Drag any edge of the expanded window and the whole dashboard scales with it:
+the aspect ratio is locked and the page is zoomed to the new width, so the
+gauges are drawn larger rather than rearranged. It goes from about 0.6× to
+2.5× of its 470×432 default, and the chosen size is remembered. The collapsed
+pill stays fixed — it is one line of text, and there is nothing in it to grow.
+
 ## Minimising
 
 Minimising puts the app in the notification area rather than the taskbar. On

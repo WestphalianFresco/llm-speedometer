@@ -12,10 +12,20 @@ const { CodexStore } = require('./providers/codex')
 const { startBridge } = require('./bridge')
 const { streamDeckStatus, packedPluginPath } = require('./streamdeck')
 
-// 432 rather than 396: the odometer housing grew a WEEK/COST strip, and at the
-// old height the footer's two reset countdowns rendered at y=395-408, entirely
-// below the viewport of a window that cannot be resized to reveal them.
+// The size the dashboard is drawn at. 432 rather than 396: the odometer
+// housing grew a WEEK/COST strip, and at the old height the footer's two reset
+// countdowns rendered at y=395-408, below the viewport.
+//
+// The window can be dragged to other sizes, but the layout is not reflowed —
+// it is a gauge cluster, and gauges that rearrange themselves are not
+// instruments. Instead the aspect ratio is locked and the page is zoomed by
+// width / 470, so a bigger window is the same dashboard drawn larger.
 const NORMAL_SIZE = { width: 470, height: 432 }
+const ASPECT = NORMAL_SIZE.width / NORMAL_SIZE.height
+// How far the dashboard may be scaled either way. Below ~0.6 the micro type
+// drops under 5px and stops being text; above 2.5 it is a poster.
+const MIN_SCALE = 0.6
+const MAX_SCALE = 2.5
 // widened when the collapsed pill started carrying the live rate as well as
 // the tank percentage; at 232 the two readouts wrapped and broke the pill
 const MINI_SIZE = { width: 278, height: 54 }
@@ -24,6 +34,12 @@ const SCREEN_MARGIN = 24
 // Shipped alongside the source so the window, the taskbar button and the
 // installer all take their icon from the same file.
 const ICON_PATH = path.join(__dirname, '..', 'build', 'icon.png')
+// Windows draws the title-bar, taskbar and Alt-Tab icons from an .ico with
+// its own 16/24/32/48 renders; scaling the 256px PNG down for those leaves
+// them soft. The other platforms take the PNG.
+const WINDOW_ICON = process.platform === 'win32'
+  ? path.join(__dirname, '..', 'build', 'icon.ico')
+  : ICON_PATH
 
 // Local transcripts are cheap to re-read incrementally, so the widget can feel
 // live off them alone. The official endpoint schedules itself (see
@@ -73,7 +89,9 @@ const DEFAULT_SETTINGS = {
 const DEFAULT_GEARBOX = { providerId: 'anthropic', gear: null, previous: null }
 
 let uiState = {
-  mini: false, x: null, y: null, unlocked: false, vendor: null,
+  // `width` is the expanded window's width; its height follows from ASPECT.
+  // null means "never resized" and takes NORMAL_SIZE.
+  mini: false, x: null, y: null, width: null, unlocked: false, vendor: null,
   settings: { ...DEFAULT_SETTINGS },
   gearbox: { ...DEFAULT_GEARBOX }
 }
@@ -90,6 +108,7 @@ function loadUiState () {
   // added since, so fill the gaps rather than trusting the file's shape.
   uiState.settings = { ...DEFAULT_SETTINGS, ...(uiState.settings || {}) }
   uiState.gearbox = coerceGearbox(uiState.gearbox)
+  uiState.width = coerceWidth(uiState.width)
 
   // Every launch opens on the landing screen. The remembered vendor is kept,
   // so getting in is one press of the fob rather than a fresh choice — but the
@@ -101,6 +120,19 @@ function loadUiState () {
 }
 
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n))
+
+/** A saved width is only kept if it is a number inside the scale range. */
+function coerceWidth (value) {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n <= 0) return null
+  return Math.round(clamp(n, NORMAL_SIZE.width * MIN_SCALE, NORMAL_SIZE.width * MAX_SCALE))
+}
+
+/** The expanded window's current size: the saved width, height by aspect. */
+function normalSize () {
+  const width = uiState.width === null ? NORMAL_SIZE.width : uiState.width
+  return { width, height: Math.round(width / ASPECT) }
+}
 
 /**
  * ui.json is ours, but it is a file on disk that anything running as this user
@@ -424,19 +456,63 @@ function createTray () {
   tray.on('double-click', revealWindow)
 }
 
+/**
+ * Zoom the page so the 470px-wide dashboard fills whatever width the window
+ * has. The pill is not scaled: it is a fixed strip of text, and 1:1 is the
+ * only size it is drawn at.
+ */
+function applyZoom () {
+  if (!win || win.isDestroyed()) return
+  const factor = uiState.mini ? 1 : win.getBounds().width / NORMAL_SIZE.width
+  if (Math.abs(win.webContents.getZoomFactor() - factor) > 0.001) {
+    win.webContents.setZoomFactor(factor)
+  }
+}
+
+/**
+ * The window's resize rules for its current state. Expanded: resizable, aspect
+ * locked, bounded by the scale range. Collapsed: fixed, because a pill that
+ * grows is a pill with empty space in it.
+ */
+function applyResizeMode () {
+  if (!win || win.isDestroyed()) return
+  if (uiState.mini) {
+    win.setResizable(false)
+    win.setAspectRatio(0)
+    win.setMinimumSize(0, 0)
+    win.setMaximumSize(0, 0)
+  } else {
+    win.setResizable(true)
+    win.setMinimumSize(
+      Math.round(NORMAL_SIZE.width * MIN_SCALE), Math.round(NORMAL_SIZE.height * MIN_SCALE))
+    win.setMaximumSize(
+      Math.round(NORMAL_SIZE.width * MAX_SCALE), Math.round(NORMAL_SIZE.height * MAX_SCALE))
+    win.setAspectRatio(ASPECT)
+  }
+  applyZoom()
+}
+
 /** Collapse or expand the pill. Shared by the IPC handler and the tray menu. */
 function setMini (mini) {
   if (!win || win.isDestroyed()) return
   uiState.mini = mini
-  const size = mini ? MINI_SIZE : NORMAL_SIZE
+  const size = mini ? MINI_SIZE : normalSize()
   const [x, y] = win.getPosition()
+  // Constraints off before the move: the pill is smaller than the expanded
+  // minimum and the other shape than the pill's fixed size, so whichever set
+  // is in force would refuse the new bounds.
+  win.setResizable(true)
+  win.setAspectRatio(0)
+  win.setMinimumSize(0, 0)
+  win.setMaximumSize(0, 0)
   win.setBounds({ ...clampToScreen(x, y, size), ...size }, true)
+  applyResizeMode()
   saveUiState()
   push()
 }
 
 function createWindow () {
-  const size = uiState.mini ? MINI_SIZE : NORMAL_SIZE
+  const size = uiState.mini ? MINI_SIZE : normalSize()
   const pos = uiState.x === null
     ? defaultPosition(size)
     : clampToScreen(uiState.x, uiState.y, size)
@@ -446,14 +522,16 @@ function createWindow () {
     ...pos,
     frame: false,
     transparent: true,
-    resizable: false,
+    // The edge handles are the frameless window's own; applyResizeMode sets
+    // the aspect lock and the bounds once the window exists.
+    resizable: !uiState.mini,
     maximizable: false,
     fullscreenable: false,
     // It behaves like an app now: a button on the taskbar with the app's own
     // icon, and a minimise that goes there rather than only collapsing in place.
     skipTaskbar: false,
     minimizable: true,
-    icon: ICON_PATH,
+    icon: WINDOW_ICON,
     alwaysOnTop: true,
     hasShadow: false,
     show: false,
@@ -478,8 +556,12 @@ function createWindow () {
   win.setAlwaysOnTop(uiState.settings.alwaysOnTop, 'floating')
   win.setOpacity(uiState.settings.opacity)
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false })
+  applyResizeMode()
 
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'))
+  // Zoom is a property of the loaded page, so a fresh load starts at 1 and
+  // has to be told the window's size again.
+  win.webContents.on('did-finish-load', applyZoom)
 
   // Transparent frameless windows do not reliably emit 'ready-to-show' on
   // Windows — the app ends up running but permanently invisible. Reveal on
@@ -498,6 +580,16 @@ function createWindow () {
     uiState.y = y
     saveUiState()
   })
+
+  // Every size change redraws the dashboard at the new scale; the width is
+  // written to disk only once the drag ends, not on each of its frames.
+  // Collapsing to the pill also resizes, and that width is not the one worth
+  // remembering.
+  win.on('resize', () => {
+    if (!uiState.mini) uiState.width = coerceWidth(win.getBounds().width)
+    applyZoom()
+  })
+  win.on('resized', () => { if (!uiState.mini) saveUiState() })
 
   // The app's own minimise button never reaches this handler — ui:minimize
   // hides directly — so this is here for the OS gestures that also minimise:
