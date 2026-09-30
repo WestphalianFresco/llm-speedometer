@@ -9,7 +9,7 @@ Built with Electron. No telemetry, no network calls except one optional
 Anthropic usage lookup described below.
 
 ```
-LLM Speedometer v0.2.0                          🔒  ─  ✕
+LLM Speedometer v0.3.0                          🔒  ─  ✕
 william@example.com
 [Anthropic] [Max 5x] [Opus 5 (1M) ▾]
 C:\Users\you\project
