@@ -2378,6 +2378,9 @@ const setNodes = {
   tray: el('set-tray'),
   login: el('set-login'),
   loginNote: el('set-login-note'),
+  deck: el('set-deck'),
+  deckStatus: el('set-deck-status'),
+  deckInstall: el('set-deck-install'),
   source: el('set-source'),
   poll: el('set-poll'),
   records: el('set-records'),
@@ -2431,6 +2434,9 @@ function renderSettings (data) {
   setNodes.login.disabled = !data.canOpenAtLogin
   setNodes.loginNote.hidden = Boolean(data.canOpenAtLogin)
 
+  setToggle(setNodes.deck, s.streamDeck)
+  renderDeck(s.streamDeck, data.streamDeck || {})
+
   document.body.classList.toggle('no-sessions', !s.showSessions)
   setSoundLevel(s.sound, s.volume)
 
@@ -2443,6 +2449,40 @@ function renderSettings (data) {
     : 'due now'
   setNodes.records.textContent = String(data.localEvents)
   setNodes.version.textContent = data.appVersion ? 'v' + data.appVersion : '—'
+}
+
+/**
+ * One line for where the chain from app to key is broken, checked in the order
+ * a person would fix it: the switch, then Stream Deck, then the plugin, then
+ * whether any key is actually reading.
+ */
+function deckStatusText (allowed, deck) {
+  if (!allowed) return 'off'
+  if (!deck.bridge) return 'bridge not running'
+  if (!deck.deckInstalled) return 'Stream Deck not found'
+  if (!deck.pluginInstalled) return 'plugin not installed'
+  if (deck.connected) return 'connected · ' + deck.keys + (deck.keys === 1 ? ' key' : ' keys')
+  return 'no keys on the deck'
+}
+
+// A failed install says why on the button for a few seconds, then reverts.
+let deckInstallNote = null
+
+function renderDeck (allowed, deck) {
+  setNodes.deckStatus.textContent = deckStatusText(allowed, deck)
+  setNodes.deckInstall.disabled = !deck.canInstall
+  setNodes.deckInstall.title = deck.canInstall
+    ? ''
+    : deck.deckInstalled ? 'the packed plugin is missing from this build' : 'install Stream Deck first'
+  if (!deckInstallNote) {
+    setNodes.deckInstall.textContent = deck.pluginInstalled ? 'Reinstall plugin…' : 'Install plugin…'
+  }
+}
+
+const DECK_INSTALL_ERRORS = {
+  not_packed: 'plugin not packed',
+  no_stream_deck: 'Stream Deck not found',
+  open_failed: 'could not open installer'
 }
 
 function vendorLabel (data) {
@@ -2494,6 +2534,20 @@ toggleSetting(setNodes.sound, 'sound')
 toggleSetting(setNodes.ontop, 'alwaysOnTop')
 toggleSetting(setNodes.tray, 'minimizeToTray')
 toggleSetting(setNodes.login, 'openAtLogin')
+toggleSetting(setNodes.deck, 'streamDeck')
+
+// Stream Deck's own installer takes it from here and asks the user to confirm.
+setNodes.deckInstall.addEventListener('click', () => {
+  window.meter.installStreamDeck().then(result => {
+    if (result && result.ok) return
+    clearTimeout(deckInstallNote)
+    setNodes.deckInstall.textContent = DECK_INSTALL_ERRORS[result && result.reason] || 'install failed'
+    deckInstallNote = setTimeout(() => {
+      deckInstallNote = null
+      if (latest) renderSettings(latest)
+    }, 4000)
+  }).catch(() => {})
+})
 
 setNodes.switch.addEventListener('click', () => {
   closeSettings()

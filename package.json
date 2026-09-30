@@ -8,9 +8,10 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win",
-    "dist:mac": "electron-builder --mac",
-    "dist:linux": "electron-builder --linux"
+    "dist": "npm run streamdeck:pack && electron-builder --win",
+    "dist:mac": "npm run streamdeck:pack && electron-builder --mac",
+    "dist:linux": "npm run streamdeck:pack && electron-builder --linux",
+    "streamdeck:pack": "npm --prefix streamdeck run build && npm --prefix streamdeck run pack"
   },
   "devDependencies": {
     "electron": "^33.0.0",
@@ -51,6 +52,12 @@
       "target": "AppImage",
       "category": "Development",
       "artifactName": "${productName}-${version}.${ext}"
-    }
+    },
+    "extraResources": [
+      {
+        "from": "build/com.williamfan.llmmeter.streamDeckPlugin",
+        "to": "com.williamfan.llmmeter.streamDeckPlugin"
+      }
+    ]
   }
 }

@@ -75,6 +75,34 @@ its own where no notification area exists.
 Collapsing to the pill is unchanged and is a different gesture: the window
 stays on screen, just small.
 
+## Stream Deck and other local readers
+
+The running app serves its reading on a loopback-only port, so other tools on
+the same machine can show the gauges without polling Anthropic a second time.
+On launch it writes `~/.llm-speedometer/bridge.json` with the port and a fresh
+random token; each request must send it as `X-Bridge-Token`.
+
+| route | does |
+|---|---|
+| `GET /v1/reading` | tanks as percent *left*, reset times, tok/min, week cost |
+| `POST /v1/refresh` | the tray's Refresh now |
+| `POST /v1/show` | the tray's Show dashboard |
+
+On quit the token is cleared but the launch command is kept, so a Stream Deck
+key pressed while the app is closed can start it.
+
+**Settings → Stream Deck** turns the bridge on or off, says where the chain is
+broken (off / Stream Deck not found / plugin not installed / no keys / connected
+· N keys), and **Install plugin…** hands the packed plugin to Stream Deck's own
+installer. The plugin's source is in `streamdeck/`: three keys — weekly tank,
+5-hour tank, output rate — drawn as ring gauges.
+
+```bash
+npm run streamdeck:pack   # builds build/com.williamfan.llmmeter.streamDeckPlugin
+```
+
+`npm run dist` runs this first and ships the packed plugin inside the app.
+
 ## Install
 
 ```bash

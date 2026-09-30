@@ -1,0 +1,73 @@
+{
+	"$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
+	"UUID": "com.williamfan.llmmeter",
+	"Name": "LLM Speedometer",
+	"Version": "0.1.0.0",
+	"Author": "William Fan",
+	"Description": "Remaining Claude / Codex quota and live output rate, read from the LLM Speedometer app.",
+	"Icon": "imgs/plugin",
+	"CategoryIcon": "imgs/category",
+	"Category": "LLM Speedometer",
+	"CodePath": "bin/plugin.mjs",
+	"SDKVersion": 3,
+	"Nodejs": {
+		"Version": "24",
+		"Debug": "enabled"
+	},
+	"OS": [
+		{
+			"Platform": "windows",
+			"MinimumVersion": "10"
+		}
+	],
+	"Software": {
+		"MinimumVersion": "7.1"
+	},
+	"Actions": [
+		{
+			"UUID": "com.williamfan.llmmeter.week",
+			"Name": "Weekly Tank",
+			"Tooltip": "Weekly quota left, with time to reset below. Press to refresh.",
+			"Icon": "imgs/action",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/key",
+					"ShowTitle": false
+				}
+			]
+		},
+		{
+			"UUID": "com.williamfan.llmmeter.fivehour",
+			"Name": "5-Hour Tank",
+			"Tooltip": "5-hour quota left, with time to reset below. Press to refresh.",
+			"Icon": "imgs/action",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/key",
+					"ShowTitle": false
+				}
+			]
+		},
+		{
+			"UUID": "com.williamfan.llmmeter.rate",
+			"Name": "Output Rate",
+			"Tooltip": "Output tokens per minute, with the week's cost below. Press to open the dashboard.",
+			"Icon": "imgs/action",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/key",
+					"ShowTitle": false
+				}
+			]
+		}
+	]
+}

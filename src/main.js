@@ -9,6 +9,8 @@ const { writeModel } = require('./providers/settings')
 const { detectVendors } = require('./providers/vendors')
 const { PROVIDERS, findGear, findProvider } = require('./providers/catalog')
 const { CodexStore } = require('./providers/codex')
+const { startBridge } = require('./bridge')
+const { streamDeckStatus, packedPluginPath } = require('./streamdeck')
 
 // 432 rather than 396: the odometer housing grew a WEEK/COST strip, and at the
 // old height the footer's two reset countdowns rendered at y=395-408, entirely
@@ -33,6 +35,7 @@ let store = null
 let mountedVendor = null
 let ticker = null
 let tray = null
+let bridge = null
 // Closing to the tray means the window's own close is not the app's exit, so
 // the two have to be told apart. Only the tray's Quit and the pill's ✕ set this.
 let quitting = false
@@ -58,6 +61,9 @@ const DEFAULT_SETTINGS = {
   // chevron — until it is dragged onto the bar, which is exactly where a gauge
   // you glance at belongs.
   minimizeToTray: true,
+  // Serve the reading on a loopback port for the Stream Deck plugin (see
+  // bridge.js). Off closes the port and the keys go dark.
+  streamDeck: true,
   // the gearbox explains itself once, then stops
   gearboxHintSeen: false
 }
@@ -135,6 +141,7 @@ function coerceSetting (key, value) {
     case 'sound':
     case 'showSessions':
     case 'minimizeToTray':
+    case 'streamDeck':
     case 'gearboxHintSeen':
       return Boolean(value)
     default:
@@ -159,6 +166,8 @@ function applySettings () {
   // The tray menu carries two of these as checkboxes; rebuilding it here is
   // what keeps them agreeing with the settings panel in both directions.
   if (tray) tray.setContextMenu(buildTrayMenu())
+
+  syncBridge()
 
   // Login items are not available in a dev checkout run through electron, and
   // asking anyway throws on some Windows configurations.
@@ -220,6 +229,44 @@ function clampToScreen (x, y, size) {
            y + size.height > a.y && y < a.y + a.height
   })
   return fits ? { x, y } : defaultPosition(size)
+}
+
+// ---------- Stream Deck bridge ----------
+
+/** Open or close the loopback port to match the setting. */
+function syncBridge () {
+  const wanted = uiState.settings.streamDeck
+  if (wanted && !bridge) {
+    bridge = startBridge({
+      read: () => (store ? store.read() : null),
+      context: () => ({ vendor: mountedVendor, unlocked: Boolean(uiState.unlocked) }),
+      refresh: refreshNow,
+      show: revealWindow,
+      // A dev checkout runs under electron.exe and needs the app folder passed.
+      launch: {
+        command: process.execPath,
+        args: app.isPackaged ? [] : [app.getAppPath()]
+      }
+    })
+  } else if (!wanted && bridge) {
+    bridge.stop()
+    bridge = null
+  }
+}
+
+// The plugin polls every few seconds, so a quarter-minute of silence means no
+// key is reading any more.
+const DECK_SEEN_MS = 15 * 1000
+
+function deckStatus () {
+  const bridgeStatus = bridge ? bridge.status() : null
+  const connected = Boolean(bridgeStatus) && Date.now() - bridgeStatus.lastSeenAt < DECK_SEEN_MS
+  return {
+    ...streamDeckStatus(app),
+    bridge: Boolean(bridgeStatus && bridgeStatus.port),
+    connected,
+    keys: connected ? bridgeStatus.keys : 0
+  }
 }
 
 // ---------- tray ----------
@@ -534,7 +581,8 @@ function push () {
     catalog: PROVIDERS,
     // the panel reports what the OS is actually doing under 'system'
     darkMode: nativeTheme.shouldUseDarkColors,
-    canOpenAtLogin: app.isPackaged
+    canOpenAtLogin: app.isPackaged,
+    streamDeck: deckStatus()
   })
   // Handed back so a caller that also needs the reading — the tray tooltip —
   // can use this one rather than running the whole read a second time.
@@ -728,6 +776,16 @@ onUi('ui:minimize', () => {
 
 onUi('ui:mini', mini => setMini(mini))
 
+// Opening the packed plugin hands it to Stream Deck's own installer, which asks
+// the user to confirm; nothing here writes into Elgato's folders.
+handleUi('ui:streamdeck-install', async () => {
+  const file = packedPluginPath(app)
+  if (!file) return { ok: false, reason: 'not_packed' }
+  if (!streamDeckStatus(app).deckInstalled) return { ok: false, reason: 'no_stream_deck' }
+  const error = await shell.openPath(file)
+  return error ? { ok: false, reason: 'open_failed' } : { ok: true }
+})
+
 // ---------- lifecycle ----------
 
 if (!app.requestSingleInstanceLock()) {
@@ -769,5 +827,6 @@ if (!app.requestSingleInstanceLock()) {
     if (store) store.save()
     saveUiState()
     if (tray) { tray.destroy(); tray = null }
+    if (bridge) { bridge.stop(); bridge = null }
   })
 }
