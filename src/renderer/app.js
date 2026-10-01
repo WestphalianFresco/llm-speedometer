@@ -2612,7 +2612,6 @@ el('btn-refresh').addEventListener('click', e => {
 })
 el('vendor-prev').addEventListener('click', () => stepVendor(-1))
 el('vendor-next').addEventListener('click', () => stepVendor(1))
-el('btn-lock').addEventListener('click', () => window.meter.lock())
 el('btn-close').addEventListener('click', () => window.meter.close())
 el('lock-close').addEventListener('click', () => window.meter.close())
 nodes.btnCloseMini.addEventListener('click', () => window.meter.close())

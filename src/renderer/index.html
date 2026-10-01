@@ -16,12 +16,48 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <!-- One icon set for every control: 24-unit grid, 2-unit round-capped
+       strokes, no fill. Stroke and colour come from .ctl-icon, so each
+       symbol is geometry only and every button follows its own hover colour. -->
+  <svg class="icon-sprite" aria-hidden="true">
+    <symbol id="i-rev" viewBox="0 0 24 24">
+      <path d="M4.3 17.6 A8.5 8.5 0 1 1 19.7 17.6 M12 14 L16 9"/>
+    </symbol>
+    <symbol id="i-gearbox" viewBox="0 0 24 24">
+      <path d="M5 5 V19 M12 5 V19 M19 5 V19 M5 12 H19"/>
+      <circle cx="5" cy="5" r="2.4" fill="currentColor" stroke="none"/>
+    </symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24">
+      <path d="M4 6 H11.6 M16.4 6 H20 M4 12 H5.6 M10.4 12 H20 M4 18 H12.6 M17.4 18 H20"/>
+      <circle cx="14" cy="6" r="2.4"/>
+      <circle cx="8" cy="12" r="2.4"/>
+      <circle cx="15" cy="18" r="2.4"/>
+    </symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24">
+      <path d="M15.75 5.5 A7.5 7.5 0 1 1 9.43 4.95 M6.53 3.59 L9.43 4.95 L8.07 7.85"/>
+    </symbol>
+    <symbol id="i-pill" viewBox="0 0 24 24">
+      <rect x="4" y="9" width="16" height="6" rx="3"/>
+    </symbol>
+    <symbol id="i-min" viewBox="0 0 24 24">
+      <path d="M5 12 H19"/>
+    </symbol>
+    <symbol id="i-close" viewBox="0 0 24 24">
+      <path d="M6 6 L18 18 M18 6 L6 18"/>
+    </symbol>
+    <symbol id="i-expand" viewBox="0 0 24 24">
+      <path d="M14 4 H20 V10 M20 4 L13.5 10.5 M10 20 H4 V14 M4 20 L10.5 13.5"/>
+    </symbol>
+    <symbol id="i-help" viewBox="0 0 24 24">
+      <path d="M9.2 9.2 A2.9 2.9 0 1 1 13.3 11.8 C12.5 12.3 12 12.9 12 13.8 V14.4 M12 18.2 V18.3"/>
+    </symbol>
+  </svg>
   <div class="card" id="card">
     <!-- Visible in the markup, not switched on later: the app always opens here,
          and starting hidden meant the dashboard painted for a frame before the
          first payload slammed this over the top of it. -->
     <div class="lock" id="lock">
-      <button class="ctl ctl-close lock-close" id="lock-close" title="Close">&#10005;</button>
+      <button class="ctl ctl-close lock-close" id="lock-close" title="Close"><svg class="ctl-icon" aria-hidden="true"><use href="#i-close"/></svg></button>
       <div class="fob" id="fob">
         <div class="fob-top">
           <span class="fob-led" id="fob-led"></span>
@@ -63,7 +99,7 @@
     <div class="settings" id="settings" hidden>
       <div class="set-head">
         <span class="set-title">SETTINGS</span>
-        <button class="ctl" id="set-close" title="Back">&#10005;</button>
+        <button class="ctl" id="set-close" title="Back"><svg class="ctl-icon" aria-hidden="true"><use href="#i-close"/></svg></button>
       </div>
 
       <div class="set-body" id="set-body">
@@ -216,8 +252,8 @@
       <div class="set-head">
         <span class="set-title">GEARBOX</span>
         <span class="set-head-controls">
-          <button class="ctl" id="gb-help" title="How to shift">?</button>
-          <button class="ctl" id="gb-close" title="Back">&#10005;</button>
+          <button class="ctl" id="gb-help" title="How to shift"><svg class="ctl-icon" aria-hidden="true"><use href="#i-help"/></svg></button>
+          <button class="ctl" id="gb-close" title="Back"><svg class="ctl-icon" aria-hidden="true"><use href="#i-close"/></svg></button>
         </span>
       </div>
 
@@ -298,21 +334,17 @@
           <span class="brand-by">By William Fan</span>
         </div>
         <div class="controls">
-          <button class="ctl ctl-rev" id="btn-rev" title="Blip the throttle">REV</button>
-          <button class="ctl ctl-svg" id="btn-gearbox" title="Gearbox — change model">
-            <svg viewBox="0 0 16 16" aria-hidden="true" class="ctl-icon">
-              <path d="M3 3.6 V8 H13 V3.6 M8 3.6 V8 M3 8 V12.4 M8 8 V12.4 M13 8 V12.4"
-                    fill="none" stroke="currentColor" stroke-width="1.3"
-                    stroke-linecap="round" stroke-linejoin="round"/>
-              <circle cx="3" cy="3.6" r="1.6" fill="currentColor"/>
-            </svg>
-          </button>
-          <button class="ctl" id="btn-settings" title="Settings">&#9881;</button>
-          <button class="ctl" id="btn-lock" title="Lock / switch provider">&#128274;</button>
-          <button class="ctl" id="btn-refresh" title="Refresh">&#10227;</button>
-          <button class="ctl" id="btn-collapse" title="Collapse to the pill">&#9647;</button>
-          <button class="ctl" id="btn-min" title="Minimize to the notification area">&#9472;</button>
-          <button class="ctl ctl-close" id="btn-close" title="Close">&#10005;</button>
+          <!-- Two groups: what the dashboard does, then what the window does.
+               Lock is not here — Settings > Switch provider is the same action,
+               and it is rare enough to live one click deeper. -->
+          <button class="ctl ctl-rev" id="btn-rev" title="Rev the engine"><svg class="ctl-icon" aria-hidden="true"><use href="#i-rev"/></svg></button>
+          <button class="ctl" id="btn-gearbox" title="Gearbox — change model"><svg class="ctl-icon" aria-hidden="true"><use href="#i-gearbox"/></svg></button>
+          <button class="ctl" id="btn-refresh" title="Refresh"><svg class="ctl-icon" aria-hidden="true"><use href="#i-refresh"/></svg></button>
+          <button class="ctl" id="btn-settings" title="Settings"><svg class="ctl-icon" aria-hidden="true"><use href="#i-settings"/></svg></button>
+          <span class="ctl-sep" aria-hidden="true"></span>
+          <button class="ctl" id="btn-collapse" title="Collapse to the pill"><svg class="ctl-icon" aria-hidden="true"><use href="#i-pill"/></svg></button>
+          <button class="ctl" id="btn-min" title="Minimize to the notification area"><svg class="ctl-icon" aria-hidden="true"><use href="#i-min"/></svg></button>
+          <button class="ctl ctl-close" id="btn-close" title="Close"><svg class="ctl-icon" aria-hidden="true"><use href="#i-close"/></svg></button>
         </div>
       </div>
 
@@ -337,8 +369,8 @@
         <span class="mini-rate mini-only" id="mini-rate"><span id="mini-rate-val">--</span><i>/MIN</i></span>
       </div>
       <div class="mini-controls mini-only">
-        <button class="ctl" id="btn-expand" title="Expand">&#10530;</button>
-        <button class="ctl ctl-close" id="btn-close-mini" title="Close">&#10005;</button>
+        <button class="ctl" id="btn-expand" title="Expand"><svg class="ctl-icon" aria-hidden="true"><use href="#i-expand"/></svg></button>
+        <button class="ctl ctl-close" id="btn-close-mini" title="Close"><svg class="ctl-icon" aria-hidden="true"><use href="#i-close"/></svg></button>
       </div>
     </div>
 
