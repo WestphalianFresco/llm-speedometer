@@ -398,6 +398,7 @@ class CodexStore {
         sevenDay: sevenDayTally.cost,
         lifetime: lifetime.cost,
         official: null,
+        plan: prettyPlan(limits ? limits.plan_type : null),
         pricing: priceMeta('openai')
       },
       weeklyScoped: null,

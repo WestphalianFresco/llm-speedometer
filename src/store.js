@@ -305,6 +305,7 @@ class UsageStore {
   read () {
     const now = Date.now()
     const localSnap = this.local.snapshot()
+    const session = readSession()
     const odometer = readOdometer()
     const fiveHour = { ...this._resolveWindow('fiveHour'), label: WINDOWS.fiveHour.label }
     const sevenDay = { ...this._resolveWindow('sevenDay'), label: WINDOWS.sevenDay.label }
@@ -324,7 +325,7 @@ class UsageStore {
     return {
       at: now,
       account: readAccount(),
-      session: readSession(),
+      session,
       liveSessions: listSessions(),
       vendors: detectVendors(),
       odometer,
@@ -365,6 +366,10 @@ class UsageStore {
         sevenDay: localSnap.sevenDaySpend,
         lifetime: null,
         official: this.officialSpend,
+        // The subscription, when there is one. A plan is a flat monthly fee, so
+        // the list-price figure above is not money anyone owes, and the
+        // renderer and the Stream Deck keep it off screen when this is set.
+        plan: session.plan || null,
         pricing: pricingMeta('anthropic')
       },
       // live consumption, which is what the speedometer reads

@@ -22,7 +22,6 @@ C:\Users\you\project
    ODO  0 2 4 5 5 3 1 6 2 TOK     ● lenovo-64      busy · 1m
    ──────────────────────────     ● gov-bid-est…  shell · 1h 2m
    WEEK 4.8M used · ~32M left     ○ on-campus…     idle · 2h 58m
-   COST $138.70 wk · $24.42 billed
 
    ⟳ 5H 1h 41m 21s    Week 2d 12h 04m
 ```
@@ -186,7 +185,10 @@ version read 7.17M tokens for a week that had actually used 4.80M.
 
 ### Cost tracking without a subscription
 
-A plan has a quota to gauge; an API key has a bill. Prices live in one table
+A plan has a quota to gauge; an API key has a bill. On a subscription the
+dashboard shows no per-token dollars at all — a monthly fee is not charged per
+token — and the COST line only appears as EXTRA when the account reports usage
+credits charged past the plan with extra usage switched on. Prices live in one table
 (`src/providers/pricing.js`) covering every vendor, so the same tokens are
 costed the same way wherever they came from, and the figure is shown directly
 rather than only used internally as a weighting unit. Rates carry the date they

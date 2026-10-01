@@ -39,6 +39,7 @@ const nodes = {
   weekUsed: el('week-used'),
   weekLeft: el('week-left'),
   costRow: el('cost-row'),
+  costLabel: el('cost-label'),
   costWeek: el('cost-week'),
   costSep: el('cost-sep'),
   costBilled: el('cost-billed'),
@@ -1307,49 +1308,57 @@ function renderWeekMeta (data) {
 }
 
 /**
- * Dollars.
+ * Dollars — but only ones somebody is actually paying.
  *
- * On a subscription these are the internal weighting unit surfaced honestly —
- * what the week's tokens would cost at list price — which is the only figure
- * that means anything to someone metering an API key rather than a plan. The
- * `billed` half is different in kind: credits the endpoint says were actually
- * charged past the plan's limits, so it is the one number here that is a bill.
+ * Without a subscription the list-price figure is the bill, so it is shown.
+ * On a plan it is not: a monthly fee is not charged per token, and a running
+ * "$138 wk" read as money being put on the account. There the row only appears
+ * for extra usage — credits the endpoint says were charged past the plan.
+ *
+ * Even that needs extra usage switched on. The endpoint reports a used amount
+ * with `enabled: false` on accounts that never turned it on, and showing that
+ * as "billed" was a charge that does not exist.
  */
 function renderCost (data) {
   const cost = data.cost
-  if (!cost) {
+  const spend = cost && cost.official
+  const billed = spend && spend.enabled !== false && spend.usedUsd > 0 ? spend.usedUsd : 0
+  const onPlan = Boolean(cost && cost.plan)
+  if (!cost || (onPlan && !billed)) {
     nodes.costRow.classList.add('empty')
     return
   }
   nodes.costRow.classList.remove('empty')
-  nodes.costWeek.textContent = money(cost.sevenDay || 0) + ' wk'
 
-  const billed = cost.official && cost.official.usedUsd
-  const showBilled = Boolean(billed && billed > 0)
-  nodes.costSep.hidden = !showBilled
-  nodes.costBilled.hidden = !showBilled
-  if (showBilled) nodes.costBilled.textContent = money(billed) + ' billed'
+  nodes.costLabel.textContent = onPlan ? 'EXTRA' : 'COST'
+  nodes.costWeek.hidden = onPlan
+  nodes.costWeek.textContent = money(cost.sevenDay || 0) + ' wk'
+  nodes.costSep.hidden = onPlan || !billed
+  nodes.costBilled.hidden = !billed
+  if (billed) nodes.costBilled.textContent = money(billed) + ' billed'
 
   const nl = String.fromCharCode(10)
   const lines = []
-  lines.push('COST')
-  lines.push('  this week ' + money(cost.sevenDay || 0) + ' at list price')
-  lines.push('  5-hour    ' + money(cost.fiveHour || 0))
-  if (cost.lifetime !== null && cost.lifetime !== undefined) {
-    lines.push('  lifetime  ' + money(cost.lifetime))
+  if (onPlan) {
+    lines.push('EXTRA USAGE')
+    lines.push('  billed    ' + money(billed) + ' in usage credits, charged past the ' +
+      cost.plan + ' plan' +
+      (spend.limitUsd ? ' (limit ' + money(spend.limitUsd) + ')' : ''))
+    lines.push('')
+    lines.push('This comes from the account and is real money. The plan itself')
+    lines.push('is a flat monthly fee, so no per-token cost is shown for it.')
+  } else {
+    lines.push('COST')
+    lines.push('  this week ' + money(cost.sevenDay || 0) + ' at list price')
+    lines.push('  5-hour    ' + money(cost.fiveHour || 0))
+    if (cost.lifetime !== null && cost.lifetime !== undefined) {
+      lines.push('  lifetime  ' + money(cost.lifetime))
+    }
+    lines.push('')
+    lines.push('No subscription was found for this account, so these tokens are')
+    lines.push('billed per token at list price.')
   }
-  if (showBilled) {
-    lines.push('  billed    ' + money(billed) + ' in usage credits, charged past the plan' +
-      (cost.official.limitUsd ? ' (limit ' + money(cost.official.limitUsd) + ')' : ''))
-  }
-  lines.push('')
-  if (showBilled) {
-    lines.push('"billed" comes from the account and is real money.')
-  }
-  lines.push('The rest is what these tokens would cost at list price — a')
-  lines.push('subscription is not charged per token, so on a plan it is a')
-  lines.push('measure of the work done, not an invoice.')
-  if (cost.pricing) {
+  if (cost.pricing && !onPlan) {
     lines.push('')
     lines.push('Prices checked ' + cost.pricing.asOf +
       (cost.pricing.overridden ? ' · overridden locally' : ''))

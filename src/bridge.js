@@ -51,7 +51,9 @@ function summarise (payload, extra) {
     tokensPerMinute: payload.tokensPerMinute || 0,
     fiveHour: tank(payload.fiveHour, budget.fiveHour),
     sevenDay: tank(payload.sevenDay, budget.sevenDay),
-    costWeek: typeof cost.sevenDay === 'number' ? cost.sevenDay : null,
+    // List price is a bill only without a subscription; on a plan the key shows
+    // nothing rather than a dollar figure nobody is being charged.
+    costWeek: typeof cost.sevenDay === 'number' && !cost.plan ? cost.sevenDay : null,
     lifetimeTokens: budget.lifetime ? budget.lifetime.usedTokens : null
   }
 }
