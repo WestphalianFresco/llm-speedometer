@@ -13,17 +13,22 @@ const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
 const BUSY_WINDOW_MS = 90 * 1000
 
 const MODEL_NAMES = {
-  'gpt-5.6-sol': 'GPT-5.6 Sol'
+  'gpt-5.6-sol': 'GPT-5.6 Sol',
+  'gpt-5.3-codex': 'GPT-5.3-Codex'
 }
 
 function prettyModel (id) {
   if (!id) return null
   if (MODEL_NAMES[id]) return MODEL_NAMES[id]
-  // gpt-5.6-sol -> GPT-5.6 Sol, without hardcoding every future name
-  return String(id)
-    .split('-')
-    .map(part => (/^gpt$/i.test(part) ? 'GPT' : part.charAt(0).toUpperCase() + part.slice(1)))
-    .join(' ')
+  // gpt-6.1-sol -> GPT-6.1 Sol, without hardcoding every future name. The
+  // version stays hyphenated to GPT the way OpenAI writes it; splitting it off
+  // with a space gave "GPT 6.1 Sol".
+  const capital = part => part.charAt(0).toUpperCase() + part.slice(1)
+  const [head, ...rest] = String(id).split('-')
+  if (/^gpt$/i.test(head) && rest.length) {
+    return ['GPT-' + rest[0], ...rest.slice(1).map(capital)].join(' ')
+  }
+  return [head, ...rest].map(capital).join(' ')
 }
 
 const prettyPlan = plan =>

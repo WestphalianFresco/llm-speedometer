@@ -8,7 +8,13 @@ const { MODEL_OPTIONS } = require('./settings')
  * This is a static list, edited by hand as models ship. It is deliberately not
  * fetched from anywhere: this app makes exactly one network request in its
  * whole lifetime (the usage endpoint), and a model list is not worth adding a
- * second one, a cache, or a supply chain.
+ * second one, a cache, or a supply chain. Last checked against each vendor's
+ * published model list on 2026-09-30.
+ *
+ * A gear's label is also its identity in ui.json: a saved selection is matched
+ * back by label, not by gear number, so re-cutting a gearbox for a new model
+ * generation drops it to neutral rather than into whatever now sits in that
+ * slot. Keep labels stable for a model that has not changed.
  *
  * SECURITY: `apply` is the only field that can cause a write, and only the
  * Anthropic entries carry one. Its value must appear in MODEL_OPTIONS, which is
@@ -39,12 +45,15 @@ const PROVIDERS = [
     configurable: true,
     note: 'Engaging a gear writes settings.json. Claude Code reads it when a ' +
           'session starts, so a running window keeps its current model.',
+    // No separate 1M gear any more: Fable, Opus 4.7 and later, and Sonnet 5
+    // and later all run the million-token window natively, so `opus[1m]` now
+    // selects exactly the model `opus` does. A gear that changes nothing would
+    // only suggest it does.
     gears: [
-      { gear: 1, label: 'Opus 5 1M', detail: 'million-token context', apply: 'opus[1m]' },
-      { gear: 2, label: 'Opus 5', detail: 'standard', apply: 'opus' },
-      { gear: 3, label: 'Fable 5', detail: 'creative', apply: 'fable' },
-      { gear: 4, label: 'Sonnet 5', detail: 'balanced', apply: 'sonnet' },
-      { gear: 5, label: 'Haiku 4.5', detail: 'fast', apply: 'haiku' }
+      { gear: 1, label: 'Fable 5.1', detail: 'most capable', apply: 'fable' },
+      { gear: 2, label: 'Opus 5.5', detail: 'flagship', apply: 'opus' },
+      { gear: 3, label: 'Sonnet 5.5', detail: 'balanced', apply: 'sonnet' },
+      { gear: 4, label: 'Haiku 4.5', detail: 'fast', apply: 'haiku' }
     ]
   },
   {
@@ -57,11 +66,11 @@ const PROVIDERS = [
     note: 'Codex keeps its model in config.toml. This dashboard does not edit ' +
           'TOML, so a gear here records your choice without changing Codex.',
     gears: [
-      { gear: 1, label: 'GPT-5', detail: 'flagship' },
-      { gear: 2, label: 'GPT-5 mini', detail: 'lighter' },
-      { gear: 3, label: 'o3', detail: 'reasoning' },
-      { gear: 4, label: 'GPT-4.1', detail: 'long context' },
-      { gear: 5, label: 'GPT-4.1 mini', detail: 'fast' }
+      { gear: 1, label: 'GPT-6 Astra', detail: 'flagship' },
+      { gear: 2, label: 'GPT-6.1 Sol', detail: 'near-flagship, cheaper' },
+      { gear: 3, label: 'GPT-5.6 Sol', detail: 'previous' },
+      { gear: 4, label: 'GPT-5.3-Codex', detail: 'coding' },
+      { gear: 5, label: 'GPT-6 Luna', detail: 'fast' }
     ]
   },
   {
@@ -74,10 +83,10 @@ const PROVIDERS = [
     note: 'No reader is implemented for Gemini CLI yet, so this gate records a ' +
           'choice only.',
     gears: [
-      { gear: 1, label: 'Gemini 3 Pro', detail: 'flagship' },
-      { gear: 2, label: 'Gemini 3 Flash', detail: 'fast' },
-      { gear: 3, label: 'Gemini 2.5 Pro', detail: 'previous' },
-      { gear: 4, label: 'Gemini 2.5 Flash', detail: 'previous, fast' }
+      { gear: 1, label: 'Gemini 3.1 Pro', detail: 'flagship, preview' },
+      { gear: 2, label: 'Gemini 3.8 Flash', detail: 'fast' },
+      { gear: 3, label: 'Gemini 3.5 Flash-Lite', detail: 'lightest' },
+      { gear: 4, label: 'Gemini 2.5 Pro', detail: 'previous' }
     ]
   },
   {
@@ -89,23 +98,23 @@ const PROVIDERS = [
     configurable: false,
     note: 'Display only — no local CLI is read for xAI.',
     gears: [
-      { gear: 1, label: 'Grok 4', detail: 'flagship' },
-      { gear: 2, label: 'Grok 4 Fast', detail: 'fast' },
-      { gear: 3, label: 'Grok 3', detail: 'previous' }
+      { gear: 1, label: 'Grok 4.7', detail: 'flagship' },
+      { gear: 2, label: 'Grok 4.6', detail: 'previous' },
+      { gear: 3, label: 'Grok 4.3', detail: 'lighter' }
     ]
   },
   {
     id: 'meta',
     emoji: '♾️',
     name: 'Meta',
-    product: 'Llama',
+    product: 'Muse',
     accent: '#0866FF',
     configurable: false,
-    note: 'Display only — Llama runs wherever you host it.',
+    note: 'Display only — no local CLI is read for Meta.',
     gears: [
-      { gear: 1, label: 'Llama 4 Maverick', detail: 'flagship' },
-      { gear: 2, label: 'Llama 4 Scout', detail: 'long context' },
-      { gear: 3, label: 'Llama 3.3 70B', detail: 'previous' }
+      { gear: 1, label: 'Muse Spark 1.3', detail: 'flagship' },
+      { gear: 2, label: 'Muse Glimmer 30B', detail: 'open weights, local' },
+      { gear: 3, label: 'Llama 4 Maverick', detail: 'previous, open' }
     ]
   },
   {
@@ -117,9 +126,10 @@ const PROVIDERS = [
     configurable: false,
     note: 'Display only — no local CLI is read for Mistral.',
     gears: [
-      { gear: 1, label: 'Mistral Large', detail: 'flagship' },
-      { gear: 2, label: 'Mistral Medium', detail: 'balanced' },
-      { gear: 3, label: 'Codestral', detail: 'code' }
+      { gear: 1, label: 'Mistral Medium 3.5', detail: 'flagship' },
+      { gear: 2, label: 'Mistral Large 3', detail: 'largest, open' },
+      { gear: 3, label: 'Mistral Small 4', detail: 'fast' },
+      { gear: 4, label: 'Codestral', detail: 'code' }
     ]
   },
   {
@@ -131,8 +141,8 @@ const PROVIDERS = [
     configurable: false,
     note: 'Display only — no local CLI is read for DeepSeek.',
     gears: [
-      { gear: 1, label: 'DeepSeek-V3', detail: 'flagship' },
-      { gear: 2, label: 'DeepSeek-R1', detail: 'reasoning' }
+      { gear: 1, label: 'DeepSeek-V4-Pro', detail: 'flagship' },
+      { gear: 2, label: 'DeepSeek-V4.1-Flash', detail: 'fast' }
     ]
   },
   {
@@ -144,8 +154,9 @@ const PROVIDERS = [
     configurable: false,
     note: 'Display only — no local CLI is read for Cohere.',
     gears: [
-      { gear: 1, label: 'Command A', detail: 'flagship' },
-      { gear: 2, label: 'Command R+', detail: 'retrieval' }
+      { gear: 1, label: 'Command A+', detail: 'flagship' },
+      { gear: 2, label: 'Command A', detail: 'previous' },
+      { gear: 3, label: 'Command R7B', detail: 'small, fast' }
     ]
   }
 ]

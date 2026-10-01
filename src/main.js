@@ -86,7 +86,7 @@ const DEFAULT_SETTINGS = {
 
 // What the shifter is currently in, and what it was in before — Reverse drops
 // back to `previous`, which is the only thing that field is for.
-const DEFAULT_GEARBOX = { providerId: 'anthropic', gear: null, previous: null }
+const DEFAULT_GEARBOX = { providerId: 'anthropic', gear: null, label: null, previous: null }
 
 let uiState = {
   // `width` is the expanded window's width; its height follows from ASPECT.
@@ -135,6 +135,25 @@ function normalSize () {
 }
 
 /**
+ * A saved gear, found again by its label rather than its number.
+ *
+ * Gear numbers are slots, and the catalogue re-cuts them when a model
+ * generation turns over. Trusting the number alone put the shifter in whatever
+ * model now sits in that slot — a saved "Opus 5 1M" in 1st came back as Fable
+ * 5.1. A selection whose label is gone, including any saved before labels were
+ * kept, comes back as neutral instead.
+ */
+function savedGear (raw) {
+  if (!raw || typeof raw !== 'object') return null
+  const provider = findProvider(String(raw.providerId))
+  const gear = provider && provider.gears.find(g => g.label === raw.label)
+  return gear ? { provider, gear } : null
+}
+
+const gearRef = found =>
+  ({ providerId: found.provider.id, gear: found.gear.gear, label: found.gear.label })
+
+/**
  * ui.json is ours, but it is a file on disk that anything running as this user
  * could have edited. Every field is re-checked against the catalogue on the way
  * in, so a hand-edited or corrupted file cannot put the shifter into a gear
@@ -142,18 +161,15 @@ function normalSize () {
  */
 function coerceGearbox (saved) {
   const raw = saved && typeof saved === 'object' ? saved : {}
-  const known = findGear(String(raw.providerId), Number(raw.gear))
-  const previous = raw.previous && typeof raw.previous === 'object'
-    ? findGear(String(raw.previous.providerId), Number(raw.previous.gear))
-    : null
+  const known = savedGear(raw)
+  const previous = savedGear(raw.previous)
   return {
     providerId: known ? known.provider.id : (findProvider(String(raw.providerId))
       ? String(raw.providerId)
       : DEFAULT_GEARBOX.providerId),
     gear: known ? known.gear.gear : null,
-    previous: previous
-      ? { providerId: previous.provider.id, gear: previous.gear.gear }
-      : null
+    label: known ? known.gear.label : null,
+    previous: previous ? gearRef(previous) : null
   }
 }
 
@@ -802,7 +818,7 @@ function engageGear (providerId, gear) {
   const found = findGear(String(providerId), Number(gear))
   if (!found) return { ok: false, reason: 'unknown_gear' }
 
-  const applied = { providerId: found.provider.id, gear: found.gear.gear }
+  const applied = gearRef(found)
   let write = null
 
   if (found.provider.configurable && found.gear.apply) {
@@ -815,10 +831,9 @@ function engageGear (providerId, gear) {
   const current = uiState.gearbox
   const changed = current.providerId !== applied.providerId || current.gear !== applied.gear
   uiState.gearbox = {
-    providerId: applied.providerId,
-    gear: applied.gear,
+    ...applied,
     previous: changed && current.gear !== null
-      ? { providerId: current.providerId, gear: current.gear }
+      ? { providerId: current.providerId, gear: current.gear, label: current.label }
       : current.previous
   }
   saveUiState()

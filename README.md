@@ -11,14 +11,14 @@ Anthropic usage lookup described below.
 ```
 LLM Speedometer v0.3.0                          🔒  ─  ✕
 william@example.com
-[Anthropic] [Max 5x] [Opus 5 (1M) ▾]
+[Anthropic] [Max 5x] [Opus 5.5 ▾]
 C:\Users\you\project
 
    TANK / 5H        OUTPUT RATE        TANK / WEEK
      60%               5.1k                93%
                     TOK / MIN
 
-   TRIP   4 2 3 8 4 2 6  TOK      SESSIONS   3 ON OPUS 5
+   TRIP   4 2 3 8 4 2 6  TOK      SESSIONS   3 ON OPUS 5.5
    ODO  0 2 4 5 5 3 1 6 2 TOK     ● lenovo-64      busy · 1m
    ──────────────────────────     ● gov-bid-est…  shell · 1h 2m
    WEEK 4.8M used · ~32M left     ○ on-campus…     idle · 2h 58m
@@ -196,6 +196,10 @@ release by writing `~/.llm-speedometer/pricing.json`:
 ```json
 { "anthropic": { "^claude-sonnet-5": { "input": 2, "output": 10 } } }
 ```
+
+An optional `"cacheRead"` sets that model's cache-hit price as a fraction of
+its input rate (default `0.1`; Opus 5.5 is `0.05`, Fable 5.1 `0.025`).
+
 - **Needle wander** is cosmetic: a spring simulation with layered noise, so the
   needle breathes like a real gauge. The digital readouts are exact.
 
