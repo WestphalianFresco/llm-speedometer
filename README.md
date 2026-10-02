@@ -5,8 +5,9 @@ what those tools already write to disk and renders it as a car dashboard:
 a tachometer for live output rate, two fuel gauges for remaining quota, and a
 mechanical odometer for lifetime and per-session token throughput.
 
-Built with Electron. No telemetry, no network calls except one optional
-Anthropic usage lookup described below.
+Built with Electron. No telemetry. The only network calls are one optional
+Anthropic usage lookup described below and the installed app checking this
+repo's GitHub Releases for updates.
 
 ```
 LLM Speedometer v0.3.0                          🔒  ─  ✕
@@ -25,6 +26,52 @@ C:\Users\you\project
 
    ⟳ 5H 1h 41m 21s    Week 2d 12h 04m
 ```
+
+## Getting started
+
+### Install it (Windows)
+
+1. Open the [latest release](https://github.com/WestphalianFresco/llm-speedometer/releases/latest).
+2. Download `LLM-Speedometer-<version>-Setup.exe` and run it.
+3. Sign in to Claude Code (`claude`) or Codex (`codex`) on the same machine if
+   you have not already; the app reads what they write to disk.
+
+After that it keeps itself up to date. It checks for a new version when it
+starts and every four hours, downloads it in the background, and asks before
+restarting into it. Choose **Later** and it installs the next time you quit.
+To check by hand, right-click the tray icon → **Check for updates**.
+
+### Run it from source
+
+You need [Node.js](https://nodejs.org) 22 or newer and git.
+
+```bash
+git clone https://github.com/WestphalianFresco/llm-speedometer.git
+cd llm-speedometer
+npm install
+npm start
+```
+
+### Build an installer
+
+```bash
+npm run dist        # Windows installer and portable .exe, in dist/
+npm run dist:mac    # macOS .dmg
+npm run dist:linux  # Linux AppImage
+```
+
+Only the Windows installer updates itself. The portable exe, and the macOS and
+Linux builds, have to be replaced by hand.
+
+## Contributing
+
+Open to pull requests — bug fixes especially. Fork the repo, make your change
+on a branch, and open a PR against `main` saying what it fixes and how you
+checked it. Small, focused PRs are the easiest to review.
+
+Every merge into `main` is released straight to every installed copy, so PRs
+are reviewed before they are merged, and only the maintainer can merge.
+Changes to `.github/workflows/` get the closest look.
 
 ## Providers
 
@@ -109,21 +156,6 @@ npm run streamdeck:pack   # builds build/com.williamfan.llmmeter.streamDeckPlugi
 ```
 
 `npm run dist` runs this first and ships the packed plugin inside the app.
-
-## Install
-
-```bash
-npm install
-npm start
-```
-
-Build a distributable:
-
-```bash
-npm run dist        # Windows portable .exe
-npm run dist:mac    # macOS .dmg
-npm run dist:linux  # Linux AppImage
-```
 
 ## Paths
 

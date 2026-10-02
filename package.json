@@ -5,6 +5,10 @@
   "productName": "LLM Speedometer",
   "author": "William Fan",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/WestphalianFresco/llm-speedometer.git"
+  },
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
@@ -61,6 +65,15 @@
         "to": "com.williamfan.llmmeter.streamDeckPlugin"
       }
     ],
-    "afterPack": "scripts/after-pack.js"
+    "afterPack": "scripts/after-pack.js",
+    "publish": {
+      "provider": "github",
+      "owner": "WestphalianFresco",
+      "repo": "llm-speedometer",
+      "releaseType": "release"
+    }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }

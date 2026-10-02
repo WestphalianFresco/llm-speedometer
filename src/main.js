@@ -11,6 +11,7 @@ const { PROVIDERS, findGear, findProvider } = require('./providers/catalog')
 const { CodexStore } = require('./providers/codex')
 const { startBridge } = require('./bridge')
 const { streamDeckStatus, packedPluginPath } = require('./streamdeck')
+const { createUpdater } = require('./updater')
 
 // The size the dashboard is drawn at. 432 rather than 396: the odometer
 // housing grew a WEEK/COST strip, and at the old height the footer's two reset
@@ -52,6 +53,7 @@ let mountedVendor = null
 let ticker = null
 let tray = null
 let bridge = null
+let updater = null
 // Closing to the tray means the window's own close is not the app's exit, so
 // the two have to be told apart. Only the tray's Quit and the pill's ✕ set this.
 let quitting = false
@@ -407,6 +409,8 @@ function buildTrayMenu () {
       }
     },
     { type: 'separator' },
+    // Exists only once the app is ready; the first menu is built a moment earlier.
+    ...(updater ? [updater.menuItem(), { type: 'separator' }] : []),
     {
       label: 'Quit',
       click: () => {
@@ -917,6 +921,18 @@ if (!app.requestSingleInstanceLock()) {
     createTray()
     applySettings()
     startTicker()
+
+    updater = createUpdater({
+      window: () => win,
+      icon: ICON_PATH,
+      // the tray menu carries the update's state, so it is rebuilt to show it
+      onChange: () => { if (tray) tray.setContextMenu(buildTrayMenu()) },
+      // otherwise the window's close handler would put it in the tray instead
+      // of letting the installer take over
+      beforeInstall: () => { quitting = true }
+    })
+    if (tray) tray.setContextMenu(buildTrayMenu())
+    updater.start()
 
     app.on('activate', revealWindow)
   })

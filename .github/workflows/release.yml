@@ -1,0 +1,95 @@
+name: Release
+
+# Every push to main becomes a release, and every installed copy of the app
+# picks it up from there (src/updater.js). Only the owner can push to main or
+# merge into it, so nothing from a fork reaches this workflow until it has been
+# reviewed and merged: there is deliberately no pull_request trigger here, and
+# never a pull_request_target one.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Two quick pushes build one after the other instead of racing for the same
+# release list. Not cancelled: a half-uploaded release is worse than a late one.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write # create the release and upload the installer to it
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # the release notes are every commit since the previous release tag
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            streamdeck/package-lock.json
+
+      - name: Install
+        run: |
+          npm ci
+          npm ci --prefix streamdeck
+
+      # major.minor come from package.json and are bumped by hand; the patch is
+      # this workflow's run number, so every push is newer than the one before
+      # and the updater has something to compare against.
+      - name: Stamp the version
+        shell: bash
+        run: |
+          base=$(node -p "require('./package.json').version.split('.').slice(0, 2).join('.')")
+          version="$base.${{ github.run_number }}"
+          npm version "$version" --no-git-tag-version
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      # electron-builder copies build/release-notes.md into latest.yml, which is
+      # where the app's "what changed" text comes from.
+      - name: Write release notes
+        shell: bash
+        run: |
+          prev=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
+          if [ -n "$prev" ]; then
+            git log "$prev..HEAD" --no-merges --format='- %s' > build/release-notes.md
+          else
+            git log -n 20 --no-merges --format='- %s' > build/release-notes.md
+          fi
+          cat build/release-notes.md
+
+      # A draft first, so the app never sees a release whose latest.yml has not
+      # been uploaded yet; it only goes public once everything is on it.
+      - name: Open a draft release
+        shell: bash
+        run: |
+          gh release create "v$VERSION" --draft --target "$GITHUB_SHA" \
+            --title "$VERSION" --notes-file build/release-notes.md
+
+      - name: Build and upload
+        run: |
+          npm run streamdeck:pack
+          npx electron-builder --win nsis --publish always
+
+      - name: Publish the release
+        shell: bash
+        run: gh release edit "v$VERSION" --draft=false --latest
+
+      # A failed build leaves its draft behind, and a re-run would open a second
+      # one under the same tag; clear it so the next attempt starts clean.
+      - name: Remove the draft after a failure
+        if: failure() && env.VERSION != ''
+        shell: bash
+        run: gh release delete "v$VERSION" --yes || true
