@@ -512,14 +512,39 @@ html, body {
 
 .mascot.sleep { animation: bob 6s ease-in-out infinite; opacity: .55; }
 
-.controls { -webkit-app-region: no-drag; display: flex; gap: 2px; flex: none; }
+.controls {
+  -webkit-app-region: no-drag;
+  display: flex; align-items: center; gap: 2px; flex: none;
+  /* the buttons are centred; this keeps the row on the brand's baseline */
+  align-self: center;
+}
 
-/* a control whose face is an svg rather than a glyph */
-.ctl-svg  { display: flex; align-items: center; justify-content: center; }
-.ctl-icon { width: 13px; height: 13px; display: block; }
+/* the sprite only defines symbols; it must not take up room itself */
+.icon-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+/* Every control face is a line icon from the sprite in index.html. The stroke
+   is set here, once, so the whole set shares one weight and follows the
+   button's colour on hover. */
+.ctl-icon {
+  width: 13px; height: 13px; display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* hairline between the dashboard's controls and the window's */
+.ctl-sep {
+  width: 1px; height: 11px;
+  margin: 0 4px;
+  background: var(--faint);
+  opacity: .45;
+}
 
 .ctl {
   -webkit-app-region: no-drag;
+  display: inline-flex; align-items: center; justify-content: center;
   width: 19px; height: 19px;
   padding: 0;
   border: 0; border-radius: 6px;
@@ -535,15 +560,7 @@ html, body {
 .ctl:active      { transform: scale(.92); }
 .ctl-close:hover { background: var(--crit); color: #fff; }
 
-/* wider than the icon buttons because it carries a word */
-.ctl-rev {
-  width: auto;
-  padding: 0 6px;
-  font-size: var(--fs-micro);
-  font-weight: var(--fw-bold);
-  letter-spacing: .8px;
-  color: var(--accent);
-}
+/* same face as the rest at rest; the accent only shows when you reach for it */
 .ctl-rev:hover  { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
 .ctl-rev:active { transform: scale(.9); }
 .ctl.spinning    { animation: spin 620ms linear; }
@@ -1156,8 +1173,14 @@ body.mini .gearbox { display: none; }
    recessed housing, lit across the middle and falling into shadow top and
    bottom the way a real rotating wheel does. Digits are zero-padded to a fixed
    width so the reading never reflows as it climbs. */
+/* The card is one big drag region and -webkit-app-region does not inherit, so a
+   child left at the initial `none` still sits inside the parent's drag surface
+   and never sees a hover — which is why the housing's tooltips could not be
+   shown. `no-drag` is how the footer's diagnostics readout already opts out;
+   the odometer carries three explanations of its own and needs the same. */
 .odo {
   flex: 0 0 auto;
+  -webkit-app-region: no-drag;
   padding: 7px 9px;
   border-radius: 7px;
   background: linear-gradient(180deg, #14120e, #1e1a14);
@@ -1238,6 +1261,48 @@ body.mini .gearbox { display: none; }
   letter-spacing: var(--ls-caps);
   color: var(--tick);
 }
+
+/* Printed rather than drummed.
+   The drums are for quantities that only ever climb; what is left of a window
+   changes direction and carries a unit, so a rolling digit would be both the
+   wrong metaphor and far too wide. It sits inside the same housing below a
+   hairline, so it still reads as part of the one instrument.
+   Colours are literal here rather than themed: the housing is dark in both
+   palettes, so a token that flips with the theme would go invisible in one. */
+.odo-meta {
+  margin-top: 3px;
+  padding-top: 5px;
+  border-top: 1px solid rgba(255,255,255,.08);
+  display: flex; flex-direction: column; gap: 3px;
+}
+
+.odo-meta-row { display: flex; align-items: baseline; gap: 5px; }
+
+.odo-meta-label {
+  flex: none;
+  width: 26px;
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--ls-caps);
+  color: var(--tick);
+}
+
+.odo-meta-val {
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: #C8BFA9;
+  white-space: nowrap;
+}
+
+/* Anything derived from a percentage rather than counted is dimmed, so the
+   estimate never passes for the measurement standing next to it. */
+.odo-meta-val.est { color: #8E8676; }
+.odo-meta-val.billed { color: #D9A441; }
+
+.odo-meta-sep { font-size: var(--fs-xs); color: #5C564A; }
+
+/* Nothing charged, nothing to say. */
+.odo-meta-row.empty { display: none; }
 
 /* ---------- footer ---------- */
 

@@ -9,12 +9,16 @@ const { claudeProjects, claudeSessions, claudeConfig } = require('./paths')
 const TAIL_BYTES = 512 * 1024
 
 const MODEL_NAMES = {
+  'claude-fable-5-1': 'Fable 5.1',
   'claude-fable-5': 'Fable 5',
+  'claude-mythos-5-1': 'Mythos 5.1',
   'claude-mythos-5': 'Mythos 5',
+  'claude-opus-5-5': 'Opus 5.5',
   'claude-opus-5': 'Opus 5',
   'claude-opus-4-8': 'Opus 4.8',
   'claude-opus-4-7': 'Opus 4.7',
   'claude-opus-4-6': 'Opus 4.6',
+  'claude-sonnet-5-5': 'Sonnet 5.5',
   'claude-sonnet-5': 'Sonnet 5',
   'claude-sonnet-4-6': 'Sonnet 4.6',
   'claude-haiku-4-5': 'Haiku 4.5'

@@ -35,6 +35,14 @@ const nodes = {
   lockOpen: el('lock-open'),
   odoTotal: el('odo-total'),
   odoTrip: el('odo-trip'),
+  weekRow: el('week-row'),
+  weekUsed: el('week-used'),
+  weekLeft: el('week-left'),
+  costRow: el('cost-row'),
+  costLabel: el('cost-label'),
+  costWeek: el('cost-week'),
+  costSep: el('cost-sep'),
+  costBilled: el('cost-billed'),
   btnCloseMini: el('btn-close-mini'),
   miniPct: el('mini-pct'),
   miniRate: el('mini-rate-val')
@@ -388,10 +396,18 @@ function applyNeedle (key, value) {
 }
 
 let lastFrame = 0
+let lastPaint = 0
+// The needles are SVG children, which never get a compositor layer of their
+// own, so every transform write re-rasters the dial underneath. While the
+// wander runs that is 60 repaints a second. Writing every other display frame
+// halves that bill; the spring and the wander clock still step every frame.
+const PAINT_MS = 30
 
 function frame (now) {
   const dt = lastFrame ? Math.min((now - lastFrame) / 1000, 0.05) : 0.016
   lastFrame = now
+  const paint = now - lastPaint >= PAINT_MS
+  if (paint) lastPaint = now
 
   for (const key of DIAL_KEYS) {
     const s = dialState[key]
@@ -411,7 +427,7 @@ function frame (now) {
       shown += (wander + s.drift * 4) * s.amplitude
     }
 
-    if (cluster[key] && cluster[key].needle) {
+    if (paint && cluster[key] && cluster[key].needle) {
       const value = Math.min(DIALS[key].max, Math.max(0, shown))
       applyNeedle(key, value)
       // during a blip the digits follow the needle, so the two never disagree
@@ -1218,12 +1234,148 @@ function paintDrum (container, value, width) {
   drumState.set(container.id, text)
 }
 
+/**
+ * 4,798,275 -> "4.8M". Compact enough for a strip the width of the housing.
+ *
+ * The band edges account for the rounding that follows them rather than sitting
+ * on the round number itself: 999,800 rounded to one decimal in millions is
+ * "1.0", so testing `>= 1e6` printed it as "1000k" — the one output the next
+ * band up exists to prevent. Each threshold is therefore the value that would
+ * round up into the band above.
+ */
+function compactTokens (n) {
+  if (n === null || n === undefined || !Number.isFinite(n)) return null
+  const abs = Math.abs(n)
+  if (abs >= 9.95e8) return (n / 1e9).toFixed(2).replace(/\.?0+$/, '') + 'B'
+  if (abs >= 9.95e5) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M'
+  if (abs >= 999.5) return Math.round(n / 1e3) + 'k'
+  return String(Math.round(n))
+}
+
+const money = n =>
+  '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+/**
+ * The week in tokens, and what it costs.
+ *
+ * `used` is counted from transcripts and `left` is derived from the official
+ * percentage, so they are marked differently on purpose — one is a measurement,
+ * the other an estimate standing on a whole-number percentage. Until the
+ * endpoint has reported enough of a window to divide by, `left` says so rather
+ * than showing a number that would move by half on the next poll.
+ */
+function renderWeekMeta (data) {
+  const budget = data.budget && data.budget.sevenDay
+  const nl = String.fromCharCode(10)
+
+  if (!budget) {
+    nodes.weekUsed.textContent = '—'
+    nodes.weekLeft.textContent = ''
+    return
+  }
+
+  nodes.weekUsed.textContent = (compactTokens(budget.usedTokens) || '0') + ' used'
+
+  const left = compactTokens(budget.remainingTokens)
+  nodes.weekLeft.textContent = left ? '~' + left + ' left' : 'calibrating'
+
+  const week = data.sevenDay || {}
+  const lines = []
+  lines.push('THIS WEEK')
+  lines.push('  used      ' + budget.usedTokens.toLocaleString('en-US') + ' tokens (' +
+    budget.turns.toLocaleString('en-US') + ' turns), counted from transcripts')
+  lines.push('  left      ' + (budget.remainingTokens === null
+    ? 'needs ' + 8 + '%+ of a fully covered window to estimate'
+    : '~' + Math.round(budget.remainingTokens).toLocaleString('en-US') + ' tokens'))
+  if (budget.capacityTokens !== null) {
+    lines.push('  window    ~' + Math.round(budget.capacityTokens).toLocaleString('en-US') +
+      ' tokens total, implied by ' +
+      (week.percent === null ? '?' : week.percent.toFixed(0)) + '% used')
+  }
+  lines.push('  opened    ' + new Date(budget.windowStart).toLocaleString())
+  lines.push('  resets    ' + (budget.resetsAt
+    ? new Date(budget.resetsAt).toLocaleString()
+    : 'unknown until the next official poll'))
+  if (budget.covered < 0.98) {
+    lines.push('  coverage  local history covers only ' +
+      (budget.covered * 100).toFixed(0) + '% of this window')
+  }
+  lines.push('')
+  lines.push('The usage endpoint reports a percentage and no token count at all,')
+  lines.push('so "left" is that percentage against a window size learned from')
+  lines.push('what this machine burned to move it. "used" is counted, not inferred.')
+  nodes.weekRow.title = lines.join(nl)
+}
+
+/**
+ * Dollars — but only ones somebody is actually paying.
+ *
+ * Without a subscription the list-price figure is the bill, so it is shown.
+ * On a plan it is not: a monthly fee is not charged per token, and a running
+ * "$138 wk" read as money being put on the account. There the row only appears
+ * for extra usage — credits the endpoint says were charged past the plan.
+ *
+ * Even that needs extra usage switched on. The endpoint reports a used amount
+ * with `enabled: false` on accounts that never turned it on, and showing that
+ * as "billed" was a charge that does not exist.
+ */
+function renderCost (data) {
+  const cost = data.cost
+  const spend = cost && cost.official
+  const billed = spend && spend.enabled !== false && spend.usedUsd > 0 ? spend.usedUsd : 0
+  const onPlan = Boolean(cost && cost.plan)
+  if (!cost || (onPlan && !billed)) {
+    nodes.costRow.classList.add('empty')
+    return
+  }
+  nodes.costRow.classList.remove('empty')
+
+  nodes.costLabel.textContent = onPlan ? 'EXTRA' : 'COST'
+  nodes.costWeek.hidden = onPlan
+  nodes.costWeek.textContent = money(cost.sevenDay || 0) + ' wk'
+  nodes.costSep.hidden = onPlan || !billed
+  nodes.costBilled.hidden = !billed
+  if (billed) nodes.costBilled.textContent = money(billed) + ' billed'
+
+  const nl = String.fromCharCode(10)
+  const lines = []
+  if (onPlan) {
+    lines.push('EXTRA USAGE')
+    lines.push('  billed    ' + money(billed) + ' in usage credits, charged past the ' +
+      cost.plan + ' plan' +
+      (spend.limitUsd ? ' (limit ' + money(spend.limitUsd) + ')' : ''))
+    lines.push('')
+    lines.push('This comes from the account and is real money. The plan itself')
+    lines.push('is a flat monthly fee, so no per-token cost is shown for it.')
+  } else {
+    lines.push('COST')
+    lines.push('  this week ' + money(cost.sevenDay || 0) + ' at list price')
+    lines.push('  5-hour    ' + money(cost.fiveHour || 0))
+    if (cost.lifetime !== null && cost.lifetime !== undefined) {
+      lines.push('  lifetime  ' + money(cost.lifetime))
+    }
+    lines.push('')
+    lines.push('No subscription was found for this account, so these tokens are')
+    lines.push('billed per token at list price.')
+  }
+  if (cost.pricing && !onPlan) {
+    lines.push('')
+    lines.push('Prices checked ' + cost.pricing.asOf +
+      (cost.pricing.overridden ? ' · overridden locally' : ''))
+    lines.push('Override at ' + cost.pricing.overrideFile)
+  }
+  nodes.costRow.title = lines.join(nl)
+}
+
 function renderOdometer (data) {
   const odo = data.odometer
   if (!odo) return
 
   paintDrum(nodes.odoTrip, odo.trip, TRIP_DIGITS)
   paintDrum(nodes.odoTotal, odo.total, ODO_DIGITS)
+
+  renderWeekMeta(data)
+  renderCost(data)
 
   const nl = String.fromCharCode(10)
   el('odo').title = [
@@ -1262,6 +1414,20 @@ function buildTooltip (data) {
   const rate = data.quotaRate || {}
   lines.push('5-hour local burn     ' + quotaShare(data.spend.fiveHour, rate.fiveHour))
   lines.push('Weekly local burn     ' + quotaShare(data.spend.sevenDay, rate.sevenDay))
+  const week = data.budget && data.budget.sevenDay
+  if (week) {
+    lines.push('Weekly tokens used    ' + week.usedTokens.toLocaleString('en-US'))
+    lines.push('Weekly tokens left    ' + (week.remainingTokens === null
+      ? 'not enough of the window burned to estimate'
+      : '~' + Math.round(week.remainingTokens).toLocaleString('en-US') +
+        ' (' + week.confidence + ')'))
+  }
+  // The per-model weekly cap fills separately and can stop you while the
+  // all-model week still looks open, so it is reported even without a gauge.
+  if (data.weeklyScoped && data.weeklyScoped.percent !== null) {
+    lines.push('Weekly cap' + (data.weeklyScoped.scope ? ' (' + data.weeklyScoped.scope + ')' : '') +
+      '  ' + data.weeklyScoped.percent.toFixed(0) + '% used')
+  }
   lines.push('Local records         ' + data.localEvents)
   // Spelled out because the footer can only count down one window at a time,
   // and which one it picked is otherwise invisible.
@@ -2218,8 +2384,12 @@ const setNodes = {
   volume: el('set-volume'),
   volumeVal: el('set-volume-val'),
   ontop: el('set-ontop'),
+  tray: el('set-tray'),
   login: el('set-login'),
   loginNote: el('set-login-note'),
+  deck: el('set-deck'),
+  deckStatus: el('set-deck-status'),
+  deckInstall: el('set-deck-install'),
   source: el('set-source'),
   poll: el('set-poll'),
   records: el('set-records'),
@@ -2265,12 +2435,16 @@ function renderSettings (data) {
   setToggle(setNodes.sessions, s.showSessions)
   setToggle(setNodes.sound, s.sound)
   setToggle(setNodes.ontop, s.alwaysOnTop)
+  setToggle(setNodes.tray, s.minimizeToTray)
   setToggle(setNodes.login, s.openAtLogin)
 
   // Registering a login item only means anything for an installed copy; say so
   // rather than offering a switch that silently does nothing.
   setNodes.login.disabled = !data.canOpenAtLogin
   setNodes.loginNote.hidden = Boolean(data.canOpenAtLogin)
+
+  setToggle(setNodes.deck, s.streamDeck)
+  renderDeck(s.streamDeck, data.streamDeck || {})
 
   document.body.classList.toggle('no-sessions', !s.showSessions)
   setSoundLevel(s.sound, s.volume)
@@ -2284,6 +2458,40 @@ function renderSettings (data) {
     : 'due now'
   setNodes.records.textContent = String(data.localEvents)
   setNodes.version.textContent = data.appVersion ? 'v' + data.appVersion : '—'
+}
+
+/**
+ * One line for where the chain from app to key is broken, checked in the order
+ * a person would fix it: the switch, then Stream Deck, then the plugin, then
+ * whether any key is actually reading.
+ */
+function deckStatusText (allowed, deck) {
+  if (!allowed) return 'off'
+  if (!deck.bridge) return 'bridge not running'
+  if (!deck.deckInstalled) return 'Stream Deck not found'
+  if (!deck.pluginInstalled) return 'plugin not installed'
+  if (deck.connected) return 'connected · ' + deck.keys + (deck.keys === 1 ? ' key' : ' keys')
+  return 'no keys on the deck'
+}
+
+// A failed install says why on the button for a few seconds, then reverts.
+let deckInstallNote = null
+
+function renderDeck (allowed, deck) {
+  setNodes.deckStatus.textContent = deckStatusText(allowed, deck)
+  setNodes.deckInstall.disabled = !deck.canInstall
+  setNodes.deckInstall.title = deck.canInstall
+    ? ''
+    : deck.deckInstalled ? 'the packed plugin is missing from this build' : 'install Stream Deck first'
+  if (!deckInstallNote) {
+    setNodes.deckInstall.textContent = deck.pluginInstalled ? 'Reinstall plugin…' : 'Install plugin…'
+  }
+}
+
+const DECK_INSTALL_ERRORS = {
+  not_packed: 'plugin not packed',
+  no_stream_deck: 'Stream Deck not found',
+  open_failed: 'could not open installer'
 }
 
 function vendorLabel (data) {
@@ -2333,7 +2541,22 @@ const toggleSetting = (node, key) => node.addEventListener('click', () => {
 toggleSetting(setNodes.sessions, 'showSessions')
 toggleSetting(setNodes.sound, 'sound')
 toggleSetting(setNodes.ontop, 'alwaysOnTop')
+toggleSetting(setNodes.tray, 'minimizeToTray')
 toggleSetting(setNodes.login, 'openAtLogin')
+toggleSetting(setNodes.deck, 'streamDeck')
+
+// Stream Deck's own installer takes it from here and asks the user to confirm.
+setNodes.deckInstall.addEventListener('click', () => {
+  window.meter.installStreamDeck().then(result => {
+    if (result && result.ok) return
+    clearTimeout(deckInstallNote)
+    setNodes.deckInstall.textContent = DECK_INSTALL_ERRORS[result && result.reason] || 'install failed'
+    deckInstallNote = setTimeout(() => {
+      deckInstallNote = null
+      if (latest) renderSettings(latest)
+    }, 4000)
+  }).catch(() => {})
+})
 
 setNodes.switch.addEventListener('click', () => {
   closeSettings()
@@ -2389,7 +2612,6 @@ el('btn-refresh').addEventListener('click', e => {
 })
 el('vendor-prev').addEventListener('click', () => stepVendor(-1))
 el('vendor-next').addEventListener('click', () => stepVendor(1))
-el('btn-lock').addEventListener('click', () => window.meter.lock())
 el('btn-close').addEventListener('click', () => window.meter.close())
 el('lock-close').addEventListener('click', () => window.meter.close())
 nodes.btnCloseMini.addEventListener('click', () => window.meter.close())

@@ -1,6 +1,6 @@
 {
   "name": "llm-speedometer",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Desktop gauge cluster for LLM usage",
   "productName": "LLM Speedometer",
   "author": "William Fan",
@@ -8,13 +8,15 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win",
-    "dist:mac": "electron-builder --mac",
-    "dist:linux": "electron-builder --linux"
+    "dist": "npm run streamdeck:pack && electron-builder --win",
+    "dist:mac": "npm run streamdeck:pack && electron-builder --mac",
+    "dist:linux": "npm run streamdeck:pack && electron-builder --linux",
+    "streamdeck:pack": "npm --prefix streamdeck run build && npm --prefix streamdeck run pack"
   },
   "devDependencies": {
     "electron": "^33.0.0",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "rcedit": "^5.0.2"
   },
   "build": {
     "appId": "dev.williamfan.llmspeedometer",
@@ -22,10 +24,11 @@
     "files": [
       "src/**/*",
       "build/icon.png",
+      "build/icon.ico",
       "package.json"
     ],
     "win": {
-      "icon": "build/icon.png",
+      "icon": "build/icon.ico",
       "target": [
         "nsis",
         "portable"
@@ -51,6 +54,13 @@
       "target": "AppImage",
       "category": "Development",
       "artifactName": "${productName}-${version}.${ext}"
-    }
+    },
+    "extraResources": [
+      {
+        "from": "build/com.williamfan.llmmeter.streamDeckPlugin",
+        "to": "com.williamfan.llmmeter.streamDeckPlugin"
+      }
+    ],
+    "afterPack": "scripts/after-pack.js"
   }
 }

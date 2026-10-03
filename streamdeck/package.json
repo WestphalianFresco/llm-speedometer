@@ -1,0 +1,21 @@
+{
+  "name": "streamdeck-llm-meter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Stream Deck plugin: LLM Speedometer's quota tanks and output rate on keys.",
+  "scripts": {
+    "build": "esbuild src/plugin.js --bundle --platform=node --format=esm --target=node24 --outfile=com.williamfan.llmmeter.sdPlugin/bin/plugin.mjs --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
+    "validate": "streamdeck validate com.williamfan.llmmeter.sdPlugin",
+    "link": "streamdeck link com.williamfan.llmmeter.sdPlugin",
+    "restart": "streamdeck restart com.williamfan.llmmeter",
+    "pack": "streamdeck pack com.williamfan.llmmeter.sdPlugin --output ../build --force --no-update-check"
+  },
+  "dependencies": {
+    "@elgato/streamdeck": "^3.0.1"
+  },
+  "devDependencies": {
+    "@elgato/cli": "^1.10.1",
+    "esbuild": "^0.28.2"
+  }
+}
