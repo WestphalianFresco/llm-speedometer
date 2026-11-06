@@ -238,30 +238,46 @@ pub fn window_tally(events: &[Event], from: i64, to: i64, now: i64) -> WindowTal
 }
 
 /// `2026-11-06T03:37:09.404Z` to epoch milliseconds. Claude Code writes UTC
-/// with a `Z`; anything else is not a timestamp this reader trusts.
+/// with a `Z`; the usage endpoint writes an offset (`+00:00`). Either is
+/// taken, with or without fractional seconds; anything else is not a
+/// timestamp this reader trusts.
 pub fn parse_iso_ms(s: &str) -> Option<i64> {
-    if s.len() < 20 || !s.ends_with('Z') {
+    if s.len() < 20 {
         return None;
     }
     let num = |from: usize, len: usize| -> Option<i64> { s.get(from..from + len)?.parse::<i64>().ok() };
     let (y, mo, d) = (num(0, 4)?, num(5, 2)?, num(8, 2)?);
     let (h, mi, se) = (num(11, 2)?, num(14, 2)?, num(17, 2)?);
-    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || se > 60 {
+    if s.as_bytes().get(10) != Some(&b'T') || !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || se > 60 {
         return None;
     }
+    let mut rest = &s[19..];
     let mut ms = 0;
-    if s.as_bytes().get(19) == Some(&b'.') {
-        let frac: String = s[20..].chars().take_while(|c| c.is_ascii_digit()).collect();
-        let f: i64 = frac.parse().ok()?;
-        ms = match frac.len() {
+    if let Some(after_dot) = rest.strip_prefix('.') {
+        let digits = after_dot.chars().take_while(|c| c.is_ascii_digit()).count();
+        let f: i64 = after_dot[..digits].parse().ok()?;
+        ms = match digits {
             0 => return None,
             1 => f * 100,
             2 => f * 10,
             3 => f,
             n => f / 10_i64.pow((n - 3) as u32),
         };
+        rest = &after_dot[digits..];
     }
-    Some((days_from_civil(y, mo, d) * 86_400 + h * 3600 + mi * 60 + se) * 1000 + ms)
+    let offset_s = match rest {
+        "Z" => 0,
+        tz if tz.len() == 6 && (tz.starts_with('+') || tz.starts_with('-')) && tz.as_bytes()[3] == b':' => {
+            let sign = if tz.starts_with('-') { -1 } else { 1 };
+            let (oh, om) = (tz[1..3].parse::<i64>().ok()?, tz[4..6].parse::<i64>().ok()?);
+            if oh > 23 || om > 59 {
+                return None;
+            }
+            sign * (oh * 3600 + om * 60)
+        }
+        _ => return None,
+    };
+    Some((days_from_civil(y, mo, d) * 86_400 + h * 3600 + mi * 60 + se - offset_s) * 1000 + ms)
 }
 
 // Howard Hinnant's days_from_civil: days since 1970-01-01 for a Gregorian date.
@@ -294,7 +310,11 @@ mod tests {
         assert_eq!(parse_iso_ms("1970-01-01T00:00:00.000Z"), Some(0));
         assert_eq!(parse_iso_ms("2026-11-06T03:37:09.4Z"), Some(NOW - 4));
         assert_eq!(parse_iso_ms("2026-11-06T03:37:09.404123Z"), Some(NOW));
-        for junk in ["", "yesterday", "2026-11-06T03:37:09", "2026-13-06T03:37:09.404Z", "2026-11-06T03:37:09.Z"] {
+        // the usage endpoint's form: an offset instead of Z
+        assert_eq!(parse_iso_ms("2026-11-06T03:37:09.404+00:00"), Some(NOW));
+        assert_eq!(parse_iso_ms("2026-11-05T22:37:09-05:00"), Some(NOW - 404));
+        assert_eq!(parse_iso_ms("2026-11-06T04:37:09+01:00"), Some(NOW - 404));
+        for junk in ["", "yesterday", "2026-11-06T03:37:09", "2026-13-06T03:37:09.404Z", "2026-11-06T03:37:09.Z", "2026-11-06T03:37:09+0100", "2026-11-06 03:37:09Z"] {
             assert_eq!(parse_iso_ms(junk), None, "{junk}");
         }
     }

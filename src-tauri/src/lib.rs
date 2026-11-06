@@ -138,32 +138,40 @@ fn push(app: &AppHandle) {
     let value = payload(app, &state);
     // ponytail: dev-log summary, one line per push; drop once a tray tooltip shows the same.
     eprintln!(
-        "[reading] odo={} trip={} rate={:.0} wk={}%/{} 5h={}%/{} left~{} files={}",
+        "[reading] odo={} trip={} rate={:.0} wk={:.1}%/{} resets={} used={} turns={} covered={:.2} 5h={:.1}%/{} left~{:.0} events={} files={}",
         value["odometer"]["total"], value["odometer"]["trip"], value["tokensPerMinute"].as_f64().unwrap_or(0.0),
-        value["sevenDay"]["percent"], value["sevenDay"]["source"], value["fiveHour"]["percent"], value["fiveHour"]["source"],
-        value["budget"]["sevenDay"]["remainingTokens"], value["odometer"]["files"]
+        value["sevenDay"]["percent"].as_f64().unwrap_or(-1.0), value["sevenDay"]["source"], value["sevenDay"]["resetsAt"],
+        value["budget"]["sevenDay"]["usedTokens"], value["budget"]["sevenDay"]["turns"], value["budget"]["sevenDay"]["covered"].as_f64().unwrap_or(-1.0),
+        value["fiveHour"]["percent"].as_f64().unwrap_or(-1.0), value["fiveHour"]["source"],
+        value["budget"]["sevenDay"]["remainingTokens"].as_f64().unwrap_or(-1.0), value["localEvents"], value["odometer"]["files"]
     );
     let _ = app.emit("usage:update", value);
 }
 
-/// One tick: re-read what is local, ask the endpoint if it is time, push.
+/// One tick: re-read what is local and push it, then ask the endpoint if it
+/// is time and push again. The local reading never waits on the network, nor
+/// on the Keychain prompt a first run raises: a poll already under way is
+/// left alone (`try_lock`), and the next tick finds its result.
 fn tick(app: &AppHandle, force_official: bool) {
     let state = app.state::<AppState>();
     let now = now_ms();
     if let Ok(mut core) = state.core.lock() {
         refresh_local(&mut core, now);
     }
-    let due = state.official.lock().map(|o| force_official || now >= o.next_allowed_at).unwrap_or(false);
-    if due {
-        // The network wait happens under the provider's lock only.
-        let fetch = state.official.lock().map(|mut o| o.fetch(now_ms(), force_official));
-        if let (Ok(fetch), Ok(mut core)) = (fetch, state.core.lock()) {
-            let events = core.scan.events.clone();
-            core.store.ingest_official(&fetch, &events, now_ms());
-            if fetch.status != "ok" {
-                eprintln!("[official] {} {}", fetch.status, fetch.reason.as_deref().unwrap_or(""));
-            }
-        }
+    push(app);
+
+    let Ok(mut official) = state.official.try_lock() else { return };
+    if !(force_official || now >= official.next_allowed_at) {
+        return;
+    }
+    let fetch = official.fetch(now_ms(), force_official);
+    drop(official);
+    if let Ok(mut core) = state.core.lock() {
+        let events = core.scan.events.clone();
+        core.store.ingest_official(&fetch, &events, now_ms());
+    }
+    if fetch.status != "ok" {
+        eprintln!("[official] {} {}", fetch.status, fetch.reason.as_deref().unwrap_or(""));
     }
     push(app);
 }
