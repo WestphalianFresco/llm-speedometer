@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "LLM Speedometer",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "identifier": "dev.williamfan.llmspeedometer",
   "build": {
     "frontendDist": "../src/renderer"
@@ -35,6 +35,18 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "createUpdaterArtifacts": true,
+    "resources": [
+      "../build/com.williamfan.llmmeter.streamDeckPlugin"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU5MjA1OEI4MzI1MTI1NEQKUldSTkpWRXl1RmdnNmJiY04waHlBczcyWUo3aURpQ2ZMS0ViR04vTUVzTVBmUVBZcmlCT2dUWnYK",
+      "endpoints": [
+        "https://github.com/WestphalianFresco/llm-speedometer/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

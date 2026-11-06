@@ -9,6 +9,7 @@ pub struct Tray<R: Runtime> {
     pub icon: tauri::tray::TrayIcon<R>,
     pub always_on_top: CheckMenuItem<R>,
     pub minimize_to_tray: CheckMenuItem<R>,
+    pub updates: MenuItem<R>,
 }
 
 fn format_tokens(n: f64) -> String {
@@ -37,8 +38,9 @@ pub fn create<R: Runtime>(app: &AppHandle<R>, always_on_top: bool, minimize_to_t
     let refresh = MenuItem::with_id(app, "refresh", "Refresh now", true, None::<&str>)?;
     let aot = CheckMenuItem::with_id(app, "alwaysOnTop", "Always on top", true, always_on_top, None::<&str>)?;
     let mtt = CheckMenuItem::with_id(app, "minimizeToTray", "Minimise to tray", true, minimize_to_tray, None::<&str>)?;
+    let updates = MenuItem::with_id(app, "updates", "Check for updates", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &pill, &PredefinedMenuItem::separator(app)?, &refresh, &aot, &mtt, &PredefinedMenuItem::separator(app)?, &quit])?;
+    let menu = Menu::with_items(app, &[&show, &pill, &PredefinedMenuItem::separator(app)?, &refresh, &aot, &mtt, &PredefinedMenuItem::separator(app)?, &updates, &PredefinedMenuItem::separator(app)?, &quit])?;
     let mut builder = TrayIconBuilder::with_id("main").menu(&menu).show_menu_on_left_click(false).tooltip(tooltip(None));
     if let Some(icon) = app.default_window_icon() {
         // Not a template image: this is a gauge face, mostly opaque, and
@@ -52,7 +54,7 @@ pub fn create<R: Runtime>(app: &AppHandle<R>, always_on_top: bool, minimize_to_t
             }
         })
         .build(app)?;
-    Ok(Tray { icon, always_on_top: aot, minimize_to_tray: mtt })
+    Ok(Tray { icon, always_on_top: aot, minimize_to_tray: mtt, updates })
 }
 
 #[cfg(test)]

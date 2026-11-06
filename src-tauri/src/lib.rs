@@ -13,12 +13,15 @@ mod session;
 mod store;
 mod tray;
 mod ui;
+mod updater;
 
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Runtime, State, Theme, WebviewWindow, WindowEvent};
+use tauri_plugin_autostart::ManagerExt as _;
 
 use bridge::{Bridge, Hooks};
 use local::{Scan, Scanner};
@@ -87,8 +90,13 @@ fn main_window<R: Runtime>(app: &AppHandle<R>) -> Option<WebviewWindow<R>> {
     app.get_webview_window("main")
 }
 
+/// Where the bundle put the packed Stream Deck plugin, if this is a bundle.
+fn bundled_plugin(app: &AppHandle) -> Option<PathBuf> {
+    app.path().resolve(format!("../build/{}.streamDeckPlugin", platform::PLUGIN_UUID), BaseDirectory::Resource).ok()
+}
+
 fn deck_status(app: &AppHandle, state: &AppState) -> Value {
-    let mut status = platform::stream_deck_status(app.path().resource_dir().ok());
+    let mut status = platform::stream_deck_status(bundled_plugin(app));
     let (port, seen_at, keys) = state.bridge.lock().ok().and_then(|b| b.as_ref().map(|b| b.status())).unwrap_or((0, 0, 0));
     let connected = port != 0 && now_ms() - seen_at < DECK_SEEN_MS;
     status["bridge"] = json!(port != 0);
@@ -137,7 +145,8 @@ fn payload(app: &AppHandle, state: &AppState) -> Value {
         // the same list the backend validates against
         "catalog": gearbox::providers(),
         "darkMode": dark,
-        "canOpenAtLogin": false,
+        // a dev checkout run through `tauri dev` must not register itself at login
+        "canOpenAtLogin": !cfg!(debug_assertions),
         "streamDeck": deck,
     });
     if let (Some(a), Some(b)) = (out.as_object_mut(), official_view.as_object()) {
@@ -270,9 +279,9 @@ fn apply_mini(app: &AppHandle, mini: bool) {
 /// at startup and after each change.
 fn apply_settings(app: &AppHandle) {
     let state = app.state::<AppState>();
-    let (theme, on_top, minimize_to_tray, want_bridge) = {
+    let (theme, on_top, minimize_to_tray, want_bridge, open_at_login) = {
         let Ok(core) = state.core.lock() else { return };
-        (core.ui.settings["theme"].as_str().unwrap_or("system").to_string(), core.ui.flag("alwaysOnTop"), core.ui.flag("minimizeToTray"), core.ui.flag("streamDeck"))
+        (core.ui.settings["theme"].as_str().unwrap_or("system").to_string(), core.ui.flag("alwaysOnTop"), core.ui.flag("minimizeToTray"), core.ui.flag("streamDeck"), core.ui.flag("openAtLogin"))
     };
     if let Some(window) = main_window(app) {
         let _ = window.set_always_on_top(on_top);
@@ -285,7 +294,10 @@ fn apply_settings(app: &AppHandle) {
         }
     }
     sync_bridge(app, want_bridge);
-    // ponytail: openAtLogin needs the autostart plugin; recorded, not applied.
+    if !cfg!(debug_assertions) {
+        let launch = app.autolaunch();
+        let _ = if open_at_login { launch.enable() } else { launch.disable() };
+    }
 }
 
 /// Open or close the loopback port to match the setting.
@@ -327,7 +339,7 @@ pub fn reveal_window<R: Runtime>(app: &AppHandle<R>) {
     let _ = window.set_focus();
 }
 
-fn shutdown(app: &AppHandle) {
+pub fn shutdown(app: &AppHandle) {
     let state = app.state::<AppState>();
     if let Ok(mut bridge) = state.bridge.lock() {
         if let Some(b) = bridge.take() {
@@ -463,9 +475,9 @@ fn reset_settings(app: AppHandle, state: State<AppState>) -> Value {
 
 #[tauri::command]
 fn install_streamdeck(app: AppHandle) -> Value {
-    let resources = app.path().resource_dir().ok();
-    let Some(file) = platform::packed_plugin_path(resources.clone()) else { return json!({ "ok": false, "reason": "not_packed" }) };
-    if platform::stream_deck_status(resources)["deckInstalled"] != true {
+    let bundled = bundled_plugin(&app);
+    let Some(file) = platform::packed_plugin_path(bundled.clone()) else { return json!({ "ok": false, "reason": "not_packed" }) };
+    if platform::stream_deck_status(bundled)["deckInstalled"] != true {
         return json!({ "ok": false, "reason": "no_stream_deck" });
     }
     if platform::open_path(&file) { json!({ "ok": true }) } else { json!({ "ok": false, "reason": "open_failed" }) }
@@ -497,6 +509,11 @@ pub fn run() {
     let store = UsageStore::new(data_dir.as_ref().map(|d| d.join("state.json")), paths::speedometer_dir().map(|d| d.join("reading.json")));
 
     tauri::Builder::default()
+        // first, so a second launch reaches the running copy before anything else loads
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| reveal_window(app)))
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
+        .manage(updater::Slot::default())
         .manage(AppState {
             core: Mutex::new(Core { scanner: Scanner::default(), store, ui: ui_state, scan: Scan::default() }),
             official: Mutex::new(OfficialProvider::default()),
@@ -560,6 +577,7 @@ pub fn run() {
             // the tray, when the platform has one
             let (on_top, to_tray) = state.core.lock().map(|c| (c.ui.flag("alwaysOnTop"), c.ui.flag("minimizeToTray"))).unwrap_or((true, true));
             if let Ok(t) = tray::create(&handle, on_top, to_tray) {
+                updater::start(handle.clone(), t.updates.clone());
                 if let Ok(mut slot) = state.tray.lock() {
                     *slot = Some(t);
                 }
@@ -585,6 +603,15 @@ pub fn run() {
                         }
                         apply_settings(&menu_app);
                         push(&menu_app);
+                    }
+                    "updates" => {
+                        let ready = menu_app.state::<updater::Slot>().lock().map(|u| u.ready.is_some()).unwrap_or(false);
+                        if ready {
+                            updater::install_and_restart(&menu_app);
+                        } else if let Some(item) = st.tray.lock().ok().and_then(|t| t.as_ref().map(|t| t.updates.clone())) {
+                            let a = menu_app.clone();
+                            tauri::async_runtime::spawn(async move { updater::check(&a, &item).await });
+                        }
                     }
                     "quit" => {
                         shutdown(&menu_app);

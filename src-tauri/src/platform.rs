@@ -57,24 +57,25 @@ fn stream_deck_dir() -> Option<PathBuf> {
     }
 }
 
-/// The packed plugin: beside the app's resources in an installed build, or
-/// under build/ in a checkout once `npm run streamdeck:pack` has run.
-pub fn packed_plugin_path(resource_dir: Option<PathBuf>) -> Option<PathBuf> {
+/// The packed plugin: the bundled resource in an installed build (resolved
+/// by the caller), or under build/ in a checkout once `npm run
+/// streamdeck:pack` has run.
+pub fn packed_plugin_path(bundled: Option<PathBuf>) -> Option<PathBuf> {
     let mut candidates = Vec::new();
-    if let Some(r) = resource_dir {
-        candidates.push(r.join(PACKED_NAME));
+    if let Some(b) = bundled {
+        candidates.push(b);
     }
     candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("build").join(PACKED_NAME));
     candidates.into_iter().find(|p| p.is_file())
 }
 
-pub fn stream_deck_status(resource_dir: Option<PathBuf>) -> Value {
+pub fn stream_deck_status(bundled: Option<PathBuf>) -> Value {
     let dir = stream_deck_dir();
     let deck_installed = dir.as_ref().map(|d| d.exists()).unwrap_or(false);
     json!({
         "deckInstalled": deck_installed,
         "pluginInstalled": deck_installed && dir.map(|d| d.join("Plugins").join(format!("{PLUGIN_UUID}.sdPlugin")).exists()).unwrap_or(false),
-        "canInstall": deck_installed && packed_plugin_path(resource_dir).is_some(),
+        "canInstall": deck_installed && packed_plugin_path(bundled).is_some(),
     })
 }
 
