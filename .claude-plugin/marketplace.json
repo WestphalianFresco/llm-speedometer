@@ -1,0 +1,11 @@
+{
+  "name": "llm-speedometer",
+  "owner": { "name": "William Fan" },
+  "plugins": [
+    {
+      "name": "llm-speedometer",
+      "source": "./plugin",
+      "description": "Quota left, output rate and this session's tokens, on the prompt's hint line and in a pane"
+    }
+  ]
+}

@@ -82,6 +82,20 @@ its own where no notification area exists.
 Collapsing to the pill is unchanged and is a different gesture: the window
 stays on screen, just small.
 
+## Claude Code plugin
+
+The same readings without a window: `plugin/` is a Claude Code plugin that
+puts quota left, the reset countdown and the output rate on the prompt's hint
+line, and `/speedometer` opens a pane with the bars and this session's TRIP.
+Its figures come from the rate-limit windows Claude Code receives with every
+reply, so it needs no Keychain access and never calls the usage endpoint.
+
+```
+/plugin install llm-speedometer --marketplace WestphalianFresco/llm-speedometer
+```
+
+See [plugin/README.md](plugin/README.md).
+
 ## Stream Deck and other local readers
 
 The running app serves its reading on a loopback-only port, so other tools on
