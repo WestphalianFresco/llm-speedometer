@@ -13,7 +13,14 @@
   window.addEventListener('unhandledrejection', e => report('rejection: ' + (e.reason && e.reason.message || e.reason)))
 
   window.meter = {
-    onUpdate: handler => { listen('usage:update', event => handler(event.payload)) },
+    onUpdate: handler => {
+      listen('usage:update', event => {
+        // Electron faded the whole window; a webview fades its page instead.
+        const opacity = event.payload && event.payload.settings && event.payload.settings.opacity
+        document.documentElement.style.opacity = typeof opacity === 'number' ? String(opacity) : ''
+        handler(event.payload)
+      })
+    },
     ready: () => invoke('ready'),
     close: () => invoke('close'),
     minimize: () => invoke('minimize'),
