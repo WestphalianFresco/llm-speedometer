@@ -13,14 +13,19 @@ const backupPath = () => settingsPath() + '.speedometer.bak'
  *
  * The values are what Claude Code accepts in settings.json / --model: either a
  * latest-version alias or a full model name. Aliases are preferred so the entry
- * keeps working when a new point release lands.
+ * keeps working when a new point release lands. The labels name what each
+ * alias resolves to on the Anthropic API as of 2026-09-30.
+ *
+ * `opus[1m]` is no longer offered: every model these aliases resolve to runs
+ * the million-token window natively, so it selects the same model as `opus`.
+ * Claude Code still accepts it, and labelFor() still names it, so a
+ * settings.json that already carries it reads correctly.
  */
 const MODEL_OPTIONS = [
-  { value: 'opus[1m]', label: 'Opus 5 (1M)' },
-  { value: 'opus', label: 'Opus 5' },
-  { value: 'sonnet', label: 'Sonnet 5' },
-  { value: 'haiku', label: 'Haiku 4.5' },
-  { value: 'fable', label: 'Fable 5' }
+  { value: 'fable', label: 'Fable 5.1' },
+  { value: 'opus', label: 'Opus 5.5' },
+  { value: 'sonnet', label: 'Sonnet 5.5' },
+  { value: 'haiku', label: 'Haiku 4.5' }
 ]
 
 const LABELS = new Map(MODEL_OPTIONS.map(o => [o.value, o.label]))
@@ -29,6 +34,9 @@ const LABELS = new Map(MODEL_OPTIONS.map(o => [o.value, o.label]))
 function labelFor (value) {
   if (!value) return null
   if (LABELS.has(value)) return LABELS.get(value)
+  // `opus[1m]` and friends: the suffix picks a context window, not a model.
+  const base = String(value).replace(/\[.*$/, '')
+  if (LABELS.has(base)) return LABELS.get(base)
   return value
 }
 

@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('meter', {
   openVendor: vendorId => ipcRenderer.invoke('ui:open-vendor', String(vendorId)),
   setSetting: (key, value) => ipcRenderer.invoke('ui:setting', String(key), value),
   resetSettings: () => ipcRenderer.invoke('ui:settings-reset'),
+  installStreamDeck: () => ipcRenderer.invoke('ui:streamdeck-install'),
   // gear is a number or the string 'R'; main resolves both against the catalogue
   setGear: (providerId, gear) => ipcRenderer.invoke('ui:gear', String(providerId), gear)
 })

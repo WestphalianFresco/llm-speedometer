@@ -21,3 +21,6 @@ Thumbs.db
 *.log
 npm-debug.log*
 COMMIT_MSG.tmp
+
+# packed Stream Deck plugin, rebuilt by `npm run streamdeck:pack`
+build/*.streamDeckPlugin

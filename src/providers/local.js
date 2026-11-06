@@ -3,6 +3,7 @@ const fs = require('fs')
 const path = require('path')
 
 const { claudeProjects } = require('./paths')
+const { costOf } = require('./pricing')
 
 const FIVE_HOURS_MS = 5 * 60 * 60 * 1000
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
@@ -17,52 +18,25 @@ const RATE_WINDOW_MS = 10 * 60 * 1000
 // retention window would discard on the very next prune.
 const FIRST_READ_CAP = 32 * 1024 * 1024
 
-// USD per million tokens. The subscription quota is not published as a token
-// count, so we use spend as the proxy for "how much of the window did I burn" —
-// it is the only local signal that weights an Opus turn against a Haiku turn
-// the way the real limiter does.
-const PRICING = [
-  [/^claude-(fable|mythos)-5/, { input: 10, output: 50 }],
-  [/^claude-opus-/, { input: 5, output: 25 }],
-  [/^claude-sonnet-/, { input: 3, output: 15 }],
-  [/^claude-haiku-/, { input: 1, output: 5 }]
-]
-const DEFAULT_PRICE = { input: 5, output: 25 }
-
-function priceFor (model) {
-  if (!model) return DEFAULT_PRICE
-  for (const [pattern, price] of PRICING) if (pattern.test(model)) return price
-  return DEFAULT_PRICE
-}
-
-// Cache multipliers relative to the base input rate.
-const CACHE_WRITE_5M = 1.25
-const CACHE_WRITE_1H = 2.0
-const CACHE_READ = 0.1
-
-function costOf (usage, model) {
-  const price = priceFor(model)
-  const cacheCreation = usage.cache_creation || {}
-  const write5m = cacheCreation.ephemeral_5m_input_tokens || 0
-  const write1h = cacheCreation.ephemeral_1h_input_tokens || 0
-  // Older transcripts only carry the flat total, with no 5m/1h split.
-  const writeFlat = Math.max(0, (usage.cache_creation_input_tokens || 0) - write5m - write1h)
-
-  const inputUnits =
-    (usage.input_tokens || 0) +
-    write5m * CACHE_WRITE_5M +
-    write1h * CACHE_WRITE_1H +
-    writeFlat * CACHE_WRITE_5M +
-    (usage.cache_read_input_tokens || 0) * CACHE_READ
-
-  return (inputUnits * price.input + (usage.output_tokens || 0) * price.output) / 1e6
-}
+// Pricing moved to providers/pricing.js: dollars are no longer only an internal
+// weighting unit for the quota gauges — they are shown directly to anyone
+// without a subscription to gauge — so every vendor has to price the same way.
+// The subscription quota is still not published as a token count, so spend
+// remains the proxy for "how much of the window did I burn": it is the only
+// local signal that weights an Opus turn against a Haiku turn the way the real
+// limiter does.
 
 class LocalProvider {
   constructor () {
     /** @type {Map<string, {offset: number, inode: number|null, lastId: string|null}>} */
     this.cursors = new Map()
-    /** @type {Array<{ts: number, cost: number, model: string}>} */
+    /**
+     * @type {Array<{ts: number, cost: number, output: number, tokens: number,
+     *               model: string}>}
+     * `tokens` is input + cache writes + output, matching the odometer's
+     * definition, so a window's token count and the lifetime total are the
+     * same measurement over different spans rather than two different ones.
+     */
     this.events = []
     this.lastScanAt = 0
     this.scanError = null
@@ -125,7 +99,16 @@ class LocalProvider {
     // still counted in full by `cost` above, which is what drives the tanks.
     const output = usage.output_tokens || 0
 
-    this.events.push({ ts, cost, output, model })
+    // What the window's token readout counts. Cache reads are excluded here for
+    // the same reason they are excluded from the rate and the odometer — they
+    // run orders of magnitude above everything else and would drown the number
+    // — so this is exactly the odometer's definition, restricted to a window.
+    const tokens =
+      (usage.input_tokens || 0) +
+      (usage.cache_creation_input_tokens || 0) +
+      output
+
+    this.events.push({ ts, cost, output, tokens, model })
   }
 
   _readAppended (file) {
@@ -237,6 +220,46 @@ class LocalProvider {
     return total
   }
 
+  /**
+   * Tokens and dollars inside an explicit window, plus how much of that window
+   * this machine can actually vouch for.
+   *
+   * `covered` matters. Retention holds eight days, so a weekly window is fully
+   * covered — but a fresh install, or a machine that was off for part of the
+   * window, has transcripts for only part of it. Reporting "12k tokens this
+   * week" off two days of history, as though it were the whole week, is the
+   * kind of wrong number that looks right. The caller gets the coverage and
+   * says so.
+   */
+  windowTally (fromMs, toMs = Date.now()) {
+    let tokens = 0
+    let cost = 0
+    let turns = 0
+    for (const e of this.events) {
+      if (e.ts < fromMs || e.ts > toMs) continue
+      tokens += e.tokens || 0
+      cost += e.cost
+      turns++
+    }
+
+    const span = Math.max(1, toMs - fromMs)
+    // History reaches back to the oldest event we still hold, but never further
+    // than retention allows regardless of what is on disk.
+    const horizon = Math.max(
+      fromMs,
+      Math.min(toMs, Date.now() - RETENTION_MS),
+      this.events.length ? Math.min(this.events[0].ts, toMs) : fromMs
+    )
+    const covered = Math.min(1, Math.max(0, (toMs - horizon) / span))
+
+    return { tokens, cost, turns, from: fromMs, to: toMs, covered }
+  }
+
+  /** Tokens inside a trailing window ending now. */
+  tokensSince (sinceMs) {
+    return this.windowTally(sinceMs).tokens
+  }
+
   snapshot () {
     const now = Date.now()
     return {
@@ -250,4 +273,6 @@ class LocalProvider {
   }
 }
 
-module.exports = { LocalProvider, costOf, FIVE_HOURS_MS, SEVEN_DAYS_MS, RATE_WINDOW_MS }
+module.exports = {
+  LocalProvider, costOf, FIVE_HOURS_MS, SEVEN_DAYS_MS, RATE_WINDOW_MS, RETENTION_MS
+}

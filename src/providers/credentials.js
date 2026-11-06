@@ -95,7 +95,9 @@ function readCredentials () {
     throw new Error('credentials_malformed')
   }
 
-  const found = walk(parsed, { token: null, expiresAt: null, score: -1 })
+  // The Keychain item also holds MCP servers' OAuth tokens (mcpOAuth, listed first). Claude's own lives under
+  // claudeAiOauth; search only there when it exists, so its expiry comes with it.
+  const found = walk(parsed.claudeAiOauth || parsed, { token: null, expiresAt: null, score: -1 })
   if (!found.token) return null
   return { token: found.token, expiresAt: found.expiresAt }
 }
