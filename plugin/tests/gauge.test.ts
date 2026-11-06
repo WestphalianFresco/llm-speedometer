@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import {
   bar, compact, count, countdown, MAX_TURNS, prune, rate, RATE_WINDOW_MS,
-  hintText, tankRow, tanks, toLimits
+  hintText, readingFile, tankRow, tanks, toLimits
 } from '../hooks/gauge'
 
 const NOW = Date.parse('2026-11-05T12:00:00Z')
@@ -147,4 +147,27 @@ test('the payload a real session reported on 11-05: one window, no five_hour', (
   const list = tanks(real, at)
   expect(hintText(list, rate([{ at, output: 4, tokens: 26_636 }], at))).toBe('WK 90% left · resets in 12h 0m')
   expect(tankRow(list[0]!, 10)).toBe(`WK   ${'█'.repeat(9)}░  90% left  resets in 12h 0m`)
+})
+
+test('readingFile: the shape of the app\'s /v1/reading, resetsAt in ms', () => {
+  const list = tanks([
+    { kind: 'five_hour', percentUsed: 40, resetsAt: iso(NOW + HOUR) },
+    { kind: 'seven_day', percentUsed: 9.5 }
+  ], NOW)
+  const r = JSON.parse(readingFile(list, 96.4, { tokens: 2150, turns: 1 }, NOW))
+  expect(r).toEqual({
+    v: 1, at: NOW, source: 'claude-code', tokensPerMinute: 96,
+    fiveHour: { percentLeft: 60, resetsAt: NOW + HOUR, source: 'official', tokensLeft: null, tokensUsed: null },
+    sevenDay: { percentLeft: 90.5, resetsAt: null, source: 'official', tokensLeft: null, tokensUsed: null },
+    costWeek: null, lifetimeTokens: null, tripTokens: 2150
+  })
+})
+
+test('readingFile: no reading, a passed reset, and junk trip all come out null or 0', () => {
+  const empty = JSON.parse(readingFile([], 0, { tokens: NaN, turns: 0 }, NOW))
+  expect(empty.fiveHour.percentLeft).toBe(null)
+  expect(empty.sevenDay).toEqual({ percentLeft: null, resetsAt: null, source: null, tokensLeft: null, tokensUsed: null })
+  expect(empty.tripTokens).toBe(0)
+  const reset = tanks([{ kind: 'five_hour', percentUsed: 95, resetsAt: iso(NOW - 1) }], NOW)
+  expect(JSON.parse(readingFile(reset, 0, { tokens: 0, turns: 0 }, NOW)).fiveHour.percentLeft).toBe(null)
 })

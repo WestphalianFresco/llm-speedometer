@@ -3,9 +3,12 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import streamDeck, { SingletonAction } from "@elgato/streamdeck";
+import { readSessionFile } from "./reading.js";
 
 // The app, not this plugin, owns the transcripts and the rate-limited usage endpoint.
 // It publishes a loopback port and token here; everything below reads through that.
+// While the app is closed, a Claude Code session running the LLM Speedometer plugin
+// leaves its reading in a file beside it, and the keys draw that instead.
 const BRIDGE_FILE = join(homedir(), ".llm-speedometer", "bridge.json");
 const POLL_INTERVAL_MS = 5_000;
 const REQUEST_TIMEOUT_MS = 2_000;
@@ -143,7 +146,7 @@ const poller = {
 	async poll() {
 		let keys = 0;
 		for (const action of this.actions) keys += action.keys.size;
-		this.reading = await call("GET", "/v1/reading", keys);
+		this.reading = (await call("GET", "/v1/reading", keys)) ?? (await readSessionFile());
 		for (const action of this.actions) action.show(action.render(this.reading));
 	},
 };
@@ -166,9 +169,9 @@ class MeterAction extends SingletonAction {
 		if (this.keys.size === 0) poller.unsubscribe(this);
 	}
 
-	/** While the app is closed, every key's press starts it. */
+	/** While the app is closed, every key's press starts it: a key drawn from a session's file included. */
 	async onKeyDown(ev) {
-		if (!poller.reading) {
+		if (!poller.reading || poller.reading.source === "claude-code") {
 			if (await launchApp()) {
 				await ev.action.showOk();
 				setTimeout(() => poller.poll(), 4_000);
@@ -245,7 +248,7 @@ class RateAction extends MeterAction {
 			fill: rate / RATE_MAX,
 			color: rateColor(rate),
 			number: formatTokens(rate),
-			detail: reading.costWeek != null ? `$${reading.costWeek.toFixed(0)} wk` : "",
+			detail: reading.costWeek != null ? `$${reading.costWeek.toFixed(0)} wk` : reading.tripTokens != null ? `trip ${formatTokens(reading.tripTokens)}` : "",
 		});
 	}
 

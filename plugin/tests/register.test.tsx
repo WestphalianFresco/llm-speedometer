@@ -13,13 +13,21 @@ const BOTH = '5H 60% left · WK 91% left · 5H resets in 1h 0m'
 type Engine = Parameters<Extract<Parameters<typeof test>[1], (...a: never[]) => unknown>>[0]
 
 // Nothing sits beneath the plugin: these hooks stand for the engine.
-type Options = { limits?: unknown[]; isPlaced?: boolean; hasClock?: boolean }
+type Options = { limits?: unknown[]; isPlaced?: boolean; hasClock?: boolean; hasHome?: boolean; writeFails?: boolean }
+type Write = { path: string; text: string }
 
-function engine ($: Engine, on: On, { limits = LIMITS, isPlaced = true, hasClock = true }: Options = {}) {
+function engine ($: Engine, on: On, { limits = LIMITS, isPlaced = true, hasClock = true, hasHome = true, writeFails = false }: Options = {}) {
   // Without a clock, the bottom of the chain throws on every $.clock call.
   const clock = hasClock ? mock.clock(on, { now: NOW }) : undefined
   const statuses: (string | undefined)[] = []
   const tails: (string | undefined)[] = []
+  const writes: Write[] = []
+  mock.env(on, hasHome ? { HOME: '/home/u' } : {})
+  on('fs.write', (_, e) => {
+    if (writeFails) throw new Error('disk full')
+    writes.push({ path: e.path, text: e.text })
+    return { value: undefined }
+  })
   on('command.register', () => ({ value: { command: 'speedometer' } }))
   on('session.usage', () => ({
     value: { startedAt: NOW, context: { window: 200_000 }, rateLimits: limits as never }
@@ -46,7 +54,7 @@ function engine ($: Engine, on: On, { limits = LIMITS, isPlaced = true, hasClock
     await ui.unmount()
     return tails.at(-1)
   }
-  return { clock, statuses, tail }
+  return { clock, statuses, tail, writes, file: () => JSON.parse(writes.at(-1)?.text ?? 'null') }
 }
 
 const start = ($: Engine) => $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
@@ -197,4 +205,63 @@ test('/speedometer still answers when no surface can place the pane', async ($, 
   await start($)
   const ran = await $.command.run(RUN)
   expect(ran.text).toContain('5H 60% left')
+})
+
+test('the reading is written where the Stream Deck looks, on start, each turn, each measurement', async ($, on) => {
+  const { writes, file } = engine($, on)
+  await start($)
+  expect(writes.at(-1)?.path).toBe('/home/u/.llm-speedometer/reading.json')
+  expect(file()).toEqual({
+    v: 1, at: NOW, source: 'claude-code', tokensPerMinute: 0,
+    fiveHour: { percentLeft: 60, resetsAt: NOW + HOUR, source: 'official', tokensLeft: null, tokensUsed: null },
+    sevenDay: { percentLeft: 91, resetsAt: NOW + 10 * HOUR, source: 'official', tokensLeft: null, tokensUsed: null },
+    costWeek: null, lifetimeTokens: null, tripTokens: 0
+  })
+  await $.turn.complete(turn(USAGE))
+  expect(file().tokensPerMinute).toBe(200)
+  expect(file().tripTokens).toBe(2150)
+  await $.session.measure(measure([{ kind: 'seven_day', percentUsed: 50 }]))
+  expect(file().sevenDay.percentLeft).toBe(50)
+  expect(file().fiveHour.percentLeft).toBe(null)
+  expect(writes.length).toBe(3)
+})
+
+test('an exit leaves a reading with no rate; /clear leaves one with no trip', async ($, on) => {
+  const { file } = engine($, on)
+  await start($)
+  await $.turn.complete(turn(USAGE))
+  await $.session.end({ ...CLEAR, reason: 'prompt_input_exit' })
+  expect(file().tokensPerMinute).toBe(0)
+  expect(file().fiveHour.percentLeft).toBe(60)
+  expect(file().tripTokens).toBe(2150)
+  await $.session.end(CLEAR)
+  expect(file().tripTokens).toBe(0)
+})
+
+test('the timer rewrites the file so an idle session\'s rate falls off', async ($, on) => {
+  const { clock, file, writes } = engine($, on)
+  await start($)
+  await $.turn.complete(turn(USAGE))
+  expect(file().tokensPerMinute).toBe(200)
+  await clock!.advance(11 * 60_000)
+  expect(file().tokensPerMinute).toBe(0)
+  expect(file().at).toBe(NOW + 11 * 60_000)
+  expect(writes.length).toBeGreaterThan(2)
+})
+
+test('no home directory: nothing is written and nothing is held up', async ($, on) => {
+  const { writes, tail } = engine($, on, { hasHome: false })
+  expect((await start($)).cwd).toBe('/')
+  expect((await $.turn.complete(turn(USAGE))).text).toBe('ok')
+  expect(writes).toEqual([])
+  expect(await tail()).toBe(`${BOTH} · 200 tok/min`)
+})
+
+test('guardrail: a write that fails costs the session nothing', async ($, on) => {
+  const { tail } = engine($, on, { writeFails: true })
+  expect((await start($)).cwd).toBe('/')
+  expect((await $.turn.complete(turn(USAGE))).text).toBe('ok')
+  expect((await $.session.measure(measure(LIMITS))).changed).toEqual(['rateLimits'])
+  expect((await $.session.end(CLEAR)).sessionId).toBe('s')
+  expect(await tail()).toBe(BOTH)
 })

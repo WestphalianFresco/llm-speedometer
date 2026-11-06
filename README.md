@@ -112,6 +112,13 @@ random token; each request must send it as `X-Bridge-Token`.
 On quit the token is cleared but the launch command is kept, so a Stream Deck
 key pressed while the app is closed can start it.
 
+While the app is closed, the keys read `~/.llm-speedometer/reading.json`
+instead — the file the [Claude Code plugin](plugin/README.md) rewrites with
+every reply — so a Claude Code session alone keeps the deck live, with no
+window anywhere. A reading older than 90 s shows its rate as 0; a window whose
+reset has passed shows as no reading. Pressing a key drawn from that file
+starts the app, as pressing an OFF key does.
+
 **Settings → Stream Deck** turns the bridge on or off, says where the chain is
 broken (off / Stream Deck not found / plugin not installed / no keys / connected
 · N keys), and **Install plugin…** hands the packed plugin to Stream Deck's own

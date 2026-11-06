@@ -1,7 +1,7 @@
 // Pure gauge logic: no `$`, so every edge case is testable with plain values.
 // Every input here comes from the engine or from state an older version wrote,
 // so nothing is trusted to be the shape its type says.
-import type { Limit, Turn } from '../types'
+import type { Limit, Trip, Turn } from '../types'
 
 export const RATE_WINDOW_MS = 10 * 60 * 1000
 export const MAX_TURNS = 500
@@ -116,6 +116,31 @@ export function hintText (list: readonly Tank[], perMin: number): string | undef
   }
   if (compact(perMin) !== '0') parts.push(`${compact(perMin)} tok/min`)
   return parts.length ? parts.join(' · ') : undefined
+}
+
+/**
+ * What a Stream Deck key, or any local reader, picks up while the app is not
+ * running: the shape of the app's own GET /v1/reading, `resetsAt` in ms.
+ */
+export function readingFile (list: readonly Tank[], perMin: number, trip: Trip, now: number): string {
+  const tank = (kind: string) => {
+    const t = list.find(x => x.kind === kind)
+    return t && t.left !== null
+      ? { percentLeft: t.left, resetsAt: t.resetsInMs === null ? null : now + t.resetsInMs,
+          source: 'official', tokensLeft: null, tokensUsed: null }
+      : { percentLeft: null, resetsAt: null, source: null, tokensLeft: null, tokensUsed: null }
+  }
+  return JSON.stringify({
+    v: 1,
+    at: now,
+    source: 'claude-code',
+    tokensPerMinute: Math.round(perMin),
+    fiveHour: tank('five_hour'),
+    sevenDay: tank('seven_day'),
+    costWeek: null,
+    lifetimeTokens: null,
+    tripTokens: count(trip.tokens)
+  })
 }
 
 export function tankRow (t: Tank, width: number): string {

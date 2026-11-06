@@ -37,6 +37,17 @@ hook that fails is skipped while the session goes on. It reads no file, makes
 no network call and runs no command — `claude plugin validate plugin` lists
 every call it makes.
 
+## What it writes
+
+One file, `~/.llm-speedometer/reading.json`: the reading in the shape of the
+app's `GET /v1/reading`, rewritten on every reply, every quota change, every
+30 s while the session is open, and once more on exit with the rate at 0. The
+Stream Deck plugin reads it whenever the app is not running, so the keys stay
+live with no window open; the app's own bridge takes precedence while it is.
+A refused write is swallowed. Two sessions open at once write the same file,
+so the rate on a key is whichever session wrote last — the quota is the
+account's either way.
+
 The hint-line tail is drawn by the terminal only; the pane works on every
 surface. A session without a quota reading (an API key, or before the first
 reply) shows nothing on the line and says so in the pane.
