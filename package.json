@@ -5,6 +5,10 @@
   "productName": "LLM Speedometer",
   "author": "William Fan",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/WestphalianFresco/llm-speedometer.git"
+  },
   "main": "src/main.js",
   "scripts": {
     "test": "node --test test/*.test.js",
@@ -41,21 +45,21 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "artifactName": "${productName}-${version}-Setup.${ext}"
+      "artifactName": "LLM-Speedometer-${version}-Setup.${ext}"
     },
     "portable": {
-      "artifactName": "${productName}-${version}-Portable.${ext}"
+      "artifactName": "LLM-Speedometer-${version}-Portable.${ext}"
     },
     "mac": {
       "icon": "build/icon-mac.png",
       "target": "dmg",
       "category": "public.app-category.developer-tools",
-      "artifactName": "${productName}-${version}.${ext}"
+      "artifactName": "LLM-Speedometer-${version}.${ext}"
     },
     "linux": {
       "target": "AppImage",
       "category": "Development",
-      "artifactName": "${productName}-${version}.${ext}"
+      "artifactName": "LLM-Speedometer-${version}.${ext}"
     },
     "extraResources": [
       {
@@ -63,6 +67,15 @@
         "to": "com.williamfan.llmmeter.streamDeckPlugin"
       }
     ],
-    "afterPack": "scripts/after-pack.js"
+    "afterPack": "scripts/after-pack.js",
+    "publish": {
+      "provider": "github",
+      "owner": "WestphalianFresco",
+      "repo": "llm-speedometer",
+      "releaseType": "draft"
+    }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }

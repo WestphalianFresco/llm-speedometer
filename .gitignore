@@ -24,3 +24,6 @@ COMMIT_MSG.tmp
 
 # packed Stream Deck plugin, rebuilt by `npm run streamdeck:pack`
 build/*.streamDeckPlugin
+
+# written by the release workflow from the commit log
+build/release-notes.md
