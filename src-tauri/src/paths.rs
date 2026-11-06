@@ -38,6 +38,15 @@ pub fn claude_config() -> Option<PathBuf> {
     )
 }
 
+pub fn codex_home() -> Option<PathBuf> {
+    resolve_root(
+        std::env::var_os("CODEX_HOME").map(PathBuf::from),
+        vec![home().map(|h| h.join(".codex")), xdg_config().map(|x| x.join("codex"))],
+    )
+}
+pub fn codex_sessions() -> Option<PathBuf> { codex_home().map(|h| h.join("sessions")) }
+pub fn codex_auth() -> Option<PathBuf> { codex_home().map(|h| h.join("auth.json")) }
+
 /// `~/.llm-speedometer`: the bridge file, the plugin's reading, price overrides.
 pub fn speedometer_dir() -> Option<PathBuf> { home().map(|h| h.join(".llm-speedometer")) }
 

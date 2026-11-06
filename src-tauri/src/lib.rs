@@ -2,6 +2,7 @@
 //! The page in `src/renderer` is unchanged; `tauri-shim.js` gives it the same
 //! `window.meter` surface the Electron preload did, over these commands.
 mod bridge;
+mod codex;
 mod credentials;
 mod gearbox;
 mod local;
@@ -38,8 +39,11 @@ const DECK_SEEN_MS: i64 = 15 * 1000;
 /// Everything a tick reads and writes, behind one lock. The usage endpoint
 /// is polled outside it: a 15 s network wait must not hold up a command.
 struct Core {
+    /// Which provider's store is mounted: `anthropic` or `openai`.
+    vendor: String,
     scanner: Scanner,
     store: UsageStore,
+    codex: codex::CodexStore,
     ui: UiState,
     scan: Scan,
 }
@@ -66,13 +70,18 @@ fn configured_model() -> Option<String> {
 fn vendors(account: Option<&Account>, has_transcripts: bool) -> Value {
     let email = account.and_then(|a| a.email.as_deref());
     let signed_in = email.is_some();
+    let mut openai = json!({ "id": "openai", "name": "OpenAI", "product": "Codex CLI", "url": "https://chatgpt.com/", "supported": true, "signInHint": null });
+    if let (Some(a), Some(b)) = (openai.as_object_mut(), codex::detect().as_object()) {
+        for (k, v) in b {
+            a.insert(k.clone(), v.clone());
+        }
+    }
     json!([
         { "id": "anthropic", "name": "Anthropic", "product": "Claude Code", "url": "https://claude.ai/login",
           "supported": true, "signInHint": "Run `claude` in a terminal and follow the sign-in prompt.",
           "present": signed_in, "usable": signed_in && has_transcripts, "account": email,
           "note": if !signed_in { "Not signed in on this machine." } else if has_transcripts { "Signed in. Usage and quota available." } else { "Signed in, but no transcripts found yet." } },
-        { "id": "openai", "name": "OpenAI", "product": "Codex CLI", "url": "https://chatgpt.com/", "supported": true, "signInHint": null,
-          "present": false, "usable": false, "account": null, "note": "Not ported to this build yet." },
+        openai,
         { "id": "google", "name": "Google", "product": "Gemini CLI", "url": "https://gemini.google.com/", "supported": false, "signInHint": null,
           "present": false, "usable": false, "account": null, "note": "Not supported." }
     ])
@@ -80,6 +89,10 @@ fn vendors(account: Option<&Account>, has_transcripts: bool) -> Value {
 
 /// Re-read the transcripts and the plugin's file. Cheap: only changed files are parsed.
 fn refresh_local(core: &mut Core, now: i64) {
+    if core.vendor == "openai" {
+        core.codex.refresh_local(now);
+        return;
+    }
     if let Some(projects) = paths::claude_projects() {
         core.scan = core.scanner.scan(&projects, now);
     }
@@ -116,25 +129,8 @@ fn payload(app: &AppHandle, state: &AppState) -> Value {
     let dark = main_window(app).and_then(|w| w.theme().ok()).map(|t| t == Theme::Dark).unwrap_or(false);
 
     let Ok(core) = state.core.lock() else { return Value::Null };
-    let scan = &core.scan;
-    let official_view = core.store.read(&scan.events, official, now, account.as_ref().and_then(|a| a.plan.as_deref()));
-    let model_of = |id: &str| core.scanner.model_of(id);
-    let live_sessions = session::list_sessions(&model_of, now);
-
-    let mut out = json!({
-        "at": now,
-        "account": account.as_ref().map(|a| json!({ "email": a.email, "org": a.org })),
-        "session": session::read_session(&scan.last, account.as_ref()),
-        "liveSessions": live_sessions,
+    let common = json!({
         "vendors": vendors(account.as_ref(), has_transcripts),
-        "odometer": {
-            "total": scan.total, "turns": scan.turns, "files": scan.files,
-            "trip": scan.trip, "tripTurns": scan.trip_turns, "tripSessionId": scan.trip_session_id,
-        },
-        "configuredModel": model.as_deref().map(gearbox::label_for),
-        "configuredModelValue": model,
-        "configuredModelFamily": model.as_deref().and_then(gearbox::model_family),
-        "modelOptions": gearbox::model_options(),
         "appVersion": app.package_info().version.to_string(),
         "unlocked": core.ui.unlocked,
         "vendor": core.ui.vendor,
@@ -149,11 +145,40 @@ fn payload(app: &AppHandle, state: &AppState) -> Value {
         "canOpenAtLogin": !cfg!(debug_assertions),
         "streamDeck": deck,
     });
-    if let (Some(a), Some(b)) = (out.as_object_mut(), official_view.as_object()) {
-        for (k, v) in b {
-            a.insert(k.clone(), v.clone());
+    let merge = |mut base: Value, extra: &Value| {
+        if let (Some(a), Some(b)) = (base.as_object_mut(), extra.as_object()) {
+            for (k, v) in b {
+                a.insert(k.clone(), v.clone());
+            }
         }
+        base
+    };
+    // Codex: the rollouts carry everything, quota included; nothing to merge in
+    if core.vendor == "openai" {
+        return merge(core.codex.read(now), &common);
     }
+
+    let scan = &core.scan;
+    let official_view = core.store.read(&scan.events, official, now, account.as_ref().and_then(|a| a.plan.as_deref()));
+    let model_of = |id: &str| core.scanner.model_of(id);
+    let live_sessions = session::list_sessions(&model_of, now);
+
+    let out = json!({
+        "at": now,
+        "account": account.as_ref().map(|a| json!({ "email": a.email, "org": a.org })),
+        "session": session::read_session(&scan.last, account.as_ref()),
+        "liveSessions": live_sessions,
+        "vendors": vendors(account.as_ref(), has_transcripts),
+        "odometer": {
+            "total": scan.total, "turns": scan.turns, "files": scan.files,
+            "trip": scan.trip, "tripTurns": scan.trip_turns, "tripSessionId": scan.trip_session_id,
+        },
+        "configuredModel": model.as_deref().map(gearbox::label_for),
+        "configuredModelValue": model,
+        "configuredModelFamily": model.as_deref().and_then(gearbox::model_family),
+        "modelOptions": gearbox::model_options(),
+    });
+    let mut out = merge(merge(out, &official_view), &common);
     out["budget"]["lifetime"] = json!({ "usedTokens": scan.total, "turns": scan.turns });
     out
 }
@@ -184,6 +209,9 @@ fn tick(app: &AppHandle, force_official: bool) {
     }
     push(app);
 
+    if state.core.lock().map(|c| c.vendor != "anthropic").unwrap_or(true) {
+        return;
+    }
     let Ok(mut official) = state.official.try_lock() else { return };
     if !(force_official || now >= official.next_allowed_at) {
         return;
@@ -415,11 +443,16 @@ fn unlock(app: AppHandle, state: State<AppState>, vendor_id: String) -> Value {
         return json!({ "ok": false, "reason": "unknown_vendor" });
     };
     if vendor["usable"] != true {
-        return json!({ "ok": false, "reason": if vendor_id == "anthropic" { "not_usable" } else { "not_ported" }, "vendor": vendor });
+        return json!({ "ok": false, "reason": "not_usable", "vendor": vendor });
     }
     if let Ok(mut core) = state.core.lock() {
         core.ui.unlocked = true;
-        core.ui.vendor = Some(vendor_id);
+        core.ui.vendor = Some(vendor_id.clone());
+        // mount the vendor's store, so the first reading is already warm
+        if core.vendor != vendor_id {
+            core.vendor = vendor_id;
+            refresh_local(&mut core, now_ms());
+        }
         save_ui(&state, &core);
     }
     push(&app);
@@ -506,6 +539,8 @@ pub fn run() {
     let data_dir = paths::app_data_dir();
     let ui_path = data_dir.as_ref().map(|d| d.join("ui.json"));
     let ui_state = UiState::load(ui_path.as_ref());
+    // the remembered vendor is mounted even though the app opens locked
+    let vendor = ui_state.vendor.clone().filter(|v| v == "openai").unwrap_or_else(|| "anthropic".into());
     let store = UsageStore::new(data_dir.as_ref().map(|d| d.join("state.json")), paths::speedometer_dir().map(|d| d.join("reading.json")));
 
     tauri::Builder::default()
@@ -515,7 +550,7 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .manage(updater::Slot::default())
         .manage(AppState {
-            core: Mutex::new(Core { scanner: Scanner::default(), store, ui: ui_state, scan: Scan::default() }),
+            core: Mutex::new(Core { vendor, scanner: Scanner::default(), store, codex: codex::CodexStore::default(), ui: ui_state, scan: Scan::default() }),
             official: Mutex::new(OfficialProvider::default()),
             bridge: Mutex::new(None),
             tray: Mutex::new(None),
