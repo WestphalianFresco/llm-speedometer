@@ -2128,7 +2128,7 @@ function moveLever (point) {
 function describeGear (pos) {
   const provider = gbProvider()
   const suffix = pos.detail ? ' · ' + pos.detail : ''
-  const how = clutchMode === 'latch' ? 'click the pedal to engage' : 'release the clutch to engage'
+  const how = clutchMode === 'latch' ? 'let go to engage' : 'release the clutch to engage'
   setGearStatus(pos.gear === 'R'
     ? 'Reverse — back to the last model  (' + how + ')'
     : pos.label + suffix + '  (' + how + ')', null)
@@ -2160,7 +2160,7 @@ function pressClutch (mode) {
   if (leverNode) leverNode.classList.add('free')
   playClutch(true)
   setGearStatus(mode === 'latch'
-    ? 'Clutch in — drag the lever, then click the pedal to engage.'
+    ? 'Clutch in — drag the lever into a gear and let go.'
     : 'Clutch in — the lever is free.', 'slipping')
 }
 
@@ -2302,17 +2302,28 @@ gbNodes.gate.addEventListener('pointermove', event => {
   if (point) moveLever(point)
 })
 
-const endGateDrag = event => {
+/**
+ * @param {boolean} letGo true when the person released the lever; false when
+ *   the drag was cancelled under them (the window lost the pointer).
+ */
+const endGateDrag = (event, letGo) => {
   if (!dragging) return
   dragging = false
   try { gbNodes.gate.releasePointerCapture(event.pointerId) } catch { /* already released */ }
   // let go mid-slot and the lever settles into the nearest detent, as a sprung
   // gate would; let go on the rail and it stays in neutral
   const found = gearUnderLever()
-  if (found) { placeLever(found.x, found.y); describeGear(found) }
+  if (!found) return
+  placeLever(found.x, found.y)
+  // A pointer is the only hand there is. Letting go of the lever in a gear
+  // lets a latched pedal up as well, and the gear takes at the bite point —
+  // one click to shift, not two. A held Space is a real foot and stays where
+  // it is; a cancelled drag only settles the lever, nothing was let go.
+  if (letGo && clutchMode === 'latch') releaseClutch()
+  else describeGear(found)
 }
-gbNodes.gate.addEventListener('pointerup', endGateDrag)
-gbNodes.gate.addEventListener('pointercancel', endGateDrag)
+gbNodes.gate.addEventListener('pointerup', event => endGateDrag(event, true))
+gbNodes.gate.addEventListener('pointercancel', event => endGateDrag(event, false))
 
 // Click puts it down and leaves it down; click again to let it up. Holding the
 // button instead would leave you with no pointer to shift with.

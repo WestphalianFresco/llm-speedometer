@@ -44,6 +44,8 @@ app's `GET /v1/reading`, rewritten on every reply, every quota change, every
 30 s while the session is open, and once more on exit with the rate at 0. The
 Stream Deck plugin reads it whenever the app is not running, so the keys stay
 live with no window open; the app's own bridge takes precedence while it is.
+The app reads it too, and anchors its weekly tank on it instead of polling the
+usage endpoint while the file is under 15 minutes old.
 A refused write is swallowed. Two sessions open at once write the same file,
 so the rate on a key is whichever session wrote last — the quota is the
 account's either way.

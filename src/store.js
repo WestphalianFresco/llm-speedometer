@@ -1,5 +1,6 @@
 'use strict'
 const fs = require('fs')
+const os = require('os')
 const path = require('path')
 const { LocalProvider, FIVE_HOURS_MS, SEVEN_DAYS_MS } = require('./providers/local')
 const { OfficialProvider } = require('./providers/official')
@@ -13,6 +14,9 @@ const { priceMeta: pricingMeta } = require('./providers/pricing')
 
 // An anchor older than this is too stale to project from with a straight face.
 const MAX_ANCHOR_AGE_MS = 90 * 60 * 1000
+// A session file older than this was left by a session that has stopped
+// writing, and says nothing about now.
+const SESSION_FILE_MAX_AGE_MS = 15 * 60 * 1000
 // Below this much spend, an anchor's implied rate is mostly noise.
 const MIN_SPEND_FOR_CALIBRATION = 0.5
 // Rolling average weight for newly observed rates.
@@ -66,8 +70,10 @@ function windowStart (resetsAt, spanMs, now = Date.now()) {
 }
 
 class UsageStore {
-  constructor ({ statePath }) {
+  constructor ({ statePath, sessionFile }) {
     this.statePath = statePath
+    this.sessionFile = sessionFile || path.join(os.homedir(), '.llm-speedometer', 'reading.json')
+    this.sessionFileMtime = null
     this.local = new LocalProvider()
     this.official = new OfficialProvider()
 
@@ -119,7 +125,46 @@ class UsageStore {
     } catch { /* a widget must never die over a cache write */ }
   }
 
-  refreshLocal () { this.local.scan() }
+  refreshLocal () {
+    this.local.scan()
+    this.ingestSessionFile()
+  }
+
+  /**
+   * The reading a Claude Code session running the plugin leaves beside the
+   * bridge file. Its percentages are the ones the engine took from the
+   * rate-limit headers of every reply — the same figures the usage endpoint
+   * reports, without the Keychain, the network or the 429s. While a session
+   * is open the week is re-anchored on every reply; the endpoint poll goes on
+   * at its own cadence for whatever the file does not carry.
+   *
+   * Only a window the file actually has is taken, only while the file is
+   * fresh, and never over an anchor that is newer than the file.
+   */
+  ingestSessionFile () {
+    let stat
+    try { stat = fs.statSync(this.sessionFile) } catch { return false }
+    if (stat.mtimeMs === this.sessionFileMtime) return false
+    this.sessionFileMtime = stat.mtimeMs
+
+    let r
+    try { r = JSON.parse(fs.readFileSync(this.sessionFile, 'utf8')) } catch { return false }
+    if (!r || r.v !== 1 || r.source !== 'claude-code' || typeof r.at !== 'number') return false
+    if (Date.now() - r.at > SESSION_FILE_MAX_AGE_MS) return false
+
+    const window = (key, t) => {
+      if (!t || typeof t.percentLeft !== 'number' || !Number.isFinite(t.percentLeft)) return null
+      if (this.anchors[key] && this.anchors[key].at > r.at) return null
+      return {
+        usedPercent: clampPercent(100 - t.percentLeft),
+        resetsAt: typeof t.resetsAt === 'number' && Number.isFinite(t.resetsAt) ? t.resetsAt : null
+      }
+    }
+    const fiveHour = window('fiveHour', r.fiveHour)
+    const sevenDay = window('sevenDay', r.sevenDay)
+    if (!fiveHour && !sevenDay) return false
+    return this.ingestOfficial({ status: 'ok', at: r.at, fiveHour, sevenDay })
+  }
 
   /** Fold a successful official reading into the anchors and calibration. */
   ingestOfficial (result) {
@@ -386,4 +431,4 @@ class UsageStore {
   }
 }
 
-module.exports = { UsageStore, MAX_ANCHOR_AGE_MS }
+module.exports = { UsageStore, MAX_ANCHOR_AGE_MS, SESSION_FILE_MAX_AGE_MS }

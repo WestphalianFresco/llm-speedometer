@@ -1,12 +1,13 @@
 {
   "name": "llm-speedometer",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Desktop gauge cluster for LLM usage",
   "productName": "LLM Speedometer",
   "author": "William Fan",
   "license": "MIT",
   "main": "src/main.js",
   "scripts": {
+    "test": "node --test test/*.test.js",
     "start": "electron .",
     "dist": "npm run streamdeck:pack && electron-builder --win",
     "dist:mac": "npm run streamdeck:pack && electron-builder --mac",

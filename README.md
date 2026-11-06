@@ -9,7 +9,7 @@ Built with Electron. No telemetry, no network calls except one optional
 Anthropic usage lookup described below.
 
 ```
-LLM Speedometer v0.3.0                          🔒  ─  ✕
+LLM Speedometer v0.4.0                          🔒  ─  ✕
 william@example.com
 [Anthropic] [Max 5x] [Opus 5.5 ▾]
 C:\Users\you\project
@@ -51,6 +51,12 @@ The two providers differ in a way worth knowing:
   15 minutes with an exponential backoff ladder, and between polls the reading
   is projected forward from the last official anchor using a self-calibrating
   dollars-to-percent rate. The badge and tooltip say which mode is live.
+- **While a Claude Code session runs the [plugin](plugin/README.md)**, the app
+  takes the week from `~/.llm-speedometer/reading.json` instead: the same
+  percentages, read by the engine from the rate-limit headers of every reply,
+  so the anchor moves with each reply and the endpoint is never needed for it.
+  A file older than 15 minutes is ignored, and the poll above still covers
+  whatever the file does not carry.
 
 [1]: https://github.com/anthropics/claude-code/issues/31021
 [2]: https://github.com/anthropics/claude-code/issues/31637
