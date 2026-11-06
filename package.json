@@ -9,7 +9,7 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "start": "electron .",
-    "dist": "npm run streamdeck:pack && electron-builder --win",
+    "dist": "npm run streamdeck:pack && electron-builder --win --x64 --arm64",
     "dist:mac": "npm run streamdeck:pack && electron-builder --mac",
     "dist:linux": "npm run streamdeck:pack && electron-builder --linux",
     "streamdeck:pack": "npm --prefix streamdeck run build && npm --prefix streamdeck run pack"
