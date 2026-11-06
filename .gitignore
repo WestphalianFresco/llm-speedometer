@@ -31,3 +31,6 @@ build/release-notes.md
 # Tauri build output
 src-tauri/target/
 src-tauri/gen/schemas/
+
+# The Electron build, kept locally as a fallback after the Tauri port
+legacy-electron/

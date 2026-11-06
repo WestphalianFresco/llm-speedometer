@@ -1,82 +1,22 @@
 {
   "name": "llm-speedometer",
-  "version": "0.4.0",
-  "description": "Desktop gauge cluster for LLM usage",
-  "productName": "LLM Speedometer",
+  "version": "0.5.0",
+  "private": true,
+  "description": "A desktop gauge cluster for LLM coding CLIs",
   "author": "William Fan",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/WestphalianFresco/llm-speedometer.git"
   },
-  "main": "src/main.js",
   "scripts": {
-    "test": "node --test test/*.test.js",
-    "start": "electron .",
-    "dist": "npm run streamdeck:pack && electron-builder --win --x64 --arm64",
-    "dist:mac": "npm run streamdeck:pack && electron-builder --mac",
-    "dist:linux": "npm run streamdeck:pack && electron-builder --linux",
-    "streamdeck:pack": "npm --prefix streamdeck run build && npm --prefix streamdeck run pack"
+    "dev": "tauri dev",
+    "build": "npm run streamdeck:pack && tauri build",
+    "test": "cargo test --manifest-path src-tauri/Cargo.toml && npm --prefix streamdeck test",
+    "streamdeck:pack": "npm --prefix streamdeck run build && npm --prefix streamdeck run pack",
+    "tauri": "tauri"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.12.4",
-    "electron": "^33.0.0",
-    "electron-builder": "^25.1.8",
-    "rcedit": "^5.0.2"
-  },
-  "build": {
-    "appId": "dev.williamfan.llmspeedometer",
-    "productName": "LLM Speedometer",
-    "files": [
-      "src/**/*",
-      "build/icon.png",
-      "build/icon.ico",
-      "package.json"
-    ],
-    "win": {
-      "icon": "build/icon.ico",
-      "target": [
-        "nsis",
-        "portable"
-      ],
-      "signAndEditExecutable": false
-    },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "artifactName": "LLM-Speedometer-${version}-Setup.${ext}"
-    },
-    "portable": {
-      "artifactName": "LLM-Speedometer-${version}-Portable.${ext}"
-    },
-    "mac": {
-      "icon": "build/icon-mac.png",
-      "target": "dmg",
-      "category": "public.app-category.developer-tools",
-      "artifactName": "LLM-Speedometer-${version}.${ext}"
-    },
-    "linux": {
-      "target": "AppImage",
-      "category": "Development",
-      "artifactName": "LLM-Speedometer-${version}.${ext}"
-    },
-    "extraResources": [
-      {
-        "from": "build/com.williamfan.llmmeter.streamDeckPlugin",
-        "to": "com.williamfan.llmmeter.streamDeckPlugin"
-      }
-    ],
-    "afterPack": "scripts/after-pack.js",
-    "publish": {
-      "provider": "github",
-      "owner": "WestphalianFresco",
-      "repo": "llm-speedometer",
-      "releaseType": "draft"
-    }
-  },
-  "dependencies": {
-    "electron-updater": "^6.8.9"
+    "@tauri-apps/cli": "^2.12.4"
   }
 }
