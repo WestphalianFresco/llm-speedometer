@@ -19,6 +19,7 @@
     "streamdeck:pack": "npm --prefix streamdeck run build && npm --prefix streamdeck run pack"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4",
     "electron": "^33.0.0",
     "electron-builder": "^25.1.8",
     "rcedit": "^5.0.2"
