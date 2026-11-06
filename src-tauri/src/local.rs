@@ -1,5 +1,6 @@
 //! The transcripts Claude Code writes under `~/.claude/projects/**/*.jsonl`:
-//! the odometer, the trip, and the turn events the rate is read from.
+//! the odometer, the trip, and the turn events the rate and the tanks are
+//! read from.
 //!
 //! Cache reads are excluded everywhere, exactly as in the Electron app: they
 //! run orders of magnitude above everything else and would drown the reading.
@@ -9,22 +10,32 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use crate::pricing::cost_of;
+
+pub const FIVE_HOURS_MS: i64 = 5 * 3600 * 1000;
+pub const SEVEN_DAYS_MS: i64 = 7 * 24 * 3600 * 1000;
+
 /// Only the trailing window matters for the rate, and the week for the tanks;
 /// a day of slack past the week lets a late anchor still be reconciled.
 pub const RETENTION_MS: i64 = 8 * 24 * 3600 * 1000;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// One API response: when, what it cost at list price, and its tokens.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Event {
     pub ts: i64,
+    pub cost: f64,
     pub output: u64,
     pub tokens: u64,
+    pub model: String,
 }
 
-/// What the newest turn said about the session it belongs to.
+/// What the newest main-thread turn said about the session it belongs to.
+/// Sidechain records are subagents, at their own model and effort.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Last {
     pub version: Option<String>,
     pub model: Option<String>,
+    pub effort: Option<String>,
     pub cwd: Option<String>,
 }
 
@@ -106,6 +117,12 @@ impl Scanner {
         out
     }
 
+    /// The model a transcript last used, by session id, from the cache: the
+    /// live-session strip asks for a few of these every tick.
+    pub fn model_of(&self, session_id: &str) -> Option<String> {
+        self.cache.iter().find(|(p, _)| p.file_stem().and_then(|s| s.to_str()) == Some(session_id)).and_then(|(_, e)| e.tally.last.model.clone())
+    }
+
     fn entry_for(&mut self, file: &Path, now: i64) -> Option<Entry> {
         let meta = fs::metadata(file).ok()?;
         let mtime = meta.modified().ok();
@@ -154,29 +171,70 @@ pub fn tally(text: &str, now: i64) -> Tally {
         out.tokens += tokens;
 
         let text_of = |v: Option<&serde_json::Value>| v.and_then(|v| v.as_str()).map(str::to_string);
-        if let Some(v) = text_of(record.get("version")) { out.last.version = Some(v) }
-        if let Some(v) = text_of(message.get("model")) { out.last.model = Some(v) }
-        if let Some(v) = text_of(record.get("cwd")) { out.last.cwd = Some(v) }
+        let model = text_of(message.get("model")).unwrap_or_default();
+        if record.get("isSidechain").and_then(|v| v.as_bool()) != Some(true) && !model.is_empty() {
+            out.last.version = text_of(record.get("version")).or(out.last.version.take());
+            out.last.model = Some(model.clone());
+            out.last.effort = text_of(record.get("effort"));
+            out.last.cwd = text_of(record.get("cwd")).or(out.last.cwd.take());
+        }
 
         // Synthetic turns carry a usage block with nothing in it.
-        if tokens == 0 {
+        let cost = cost_of(usage, &model, "anthropic");
+        if cost <= 0.0 {
             continue;
         }
         if let Some(ts) = record.get("timestamp").and_then(|v| v.as_str()).and_then(parse_iso_ms) {
             if ts > now - RETENTION_MS {
-                out.events.push(Event { ts, output, tokens });
+                out.events.push(Event { ts, cost, output, tokens, model });
             }
         }
     }
     out
 }
 
-/// Output tokens per minute over the trailing `window_ms`, from events that
-/// are already sorted or not — order does not matter here.
+/// Output tokens per minute over the trailing `window_ms`. Cache reads and
+/// writes are context bookkeeping, not generation, and would swamp this.
 pub fn rate_per_minute(events: &[Event], now: i64, window_ms: i64) -> f64 {
     let since = now - window_ms;
     let output: u64 = events.iter().filter(|e| e.ts > since && e.ts <= now).map(|e| e.output).sum();
     output as f64 / (window_ms as f64 / 60_000.0)
+}
+
+/// List-price dollars of the events inside `[from, to]`.
+pub fn spend_between(events: &[Event], from: i64, to: i64) -> f64 {
+    // `+ 0.0`: an empty f64 sum is -0.0, which the page would print as "$-0.00"
+    events.iter().filter(|e| e.ts >= from && e.ts <= to).map(|e| e.cost).sum::<f64>() + 0.0
+}
+
+pub fn spend_since(events: &[Event], since: i64) -> f64 {
+    events.iter().filter(|e| e.ts >= since).map(|e| e.cost).sum::<f64>() + 0.0
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WindowTally {
+    pub tokens: u64,
+    pub cost: f64,
+    pub turns: u64,
+    pub from: i64,
+    pub to: i64,
+    /// How much of the window local history can vouch for: retention holds
+    /// eight days, but a fresh install or a machine that was off covers less.
+    pub covered: f64,
+}
+
+pub fn window_tally(events: &[Event], from: i64, to: i64, now: i64) -> WindowTally {
+    let mut t = WindowTally { from, to, ..Default::default() };
+    for e in events.iter().filter(|e| e.ts >= from && e.ts <= to) {
+        t.tokens += e.tokens;
+        t.cost += e.cost;
+        t.turns += 1;
+    }
+    let span = (to - from).max(1) as f64;
+    let oldest = events.first().map(|e| e.ts.min(to)).unwrap_or(from);
+    let horizon = from.max((now - RETENTION_MS).min(to)).max(oldest);
+    t.covered = ((to - horizon) as f64 / span).clamp(0.0, 1.0);
+    t
 }
 
 /// `2026-11-06T03:37:09.404Z` to epoch milliseconds. Claude Code writes UTC
@@ -256,11 +314,30 @@ mod tests {
         assert_eq!(t.turns, 3);
         assert_eq!(t.tokens, 2 + 30890 + 281 + 10 + 90);
         assert_eq!(t.events.len(), 2);
-        assert_eq!(t.last, Last { version: Some("2.1.317".into()), model: Some("claude-opus-5-5".into()), cwd: Some("/w".into()) });
+        assert_eq!(t.last, Last { version: Some("2.1.317".into()), model: Some("claude-opus-5-5".into()), effort: None, cwd: Some("/w".into()) });
+        assert!(t.events.iter().all(|e| e.cost > 0.0 && e.model == "claude-opus-5-5"));
         // output only, over the trailing ten minutes: 281 + 90 over 10 min
         assert_eq!(rate_per_minute(&t.events, NOW, 10 * 60_000), 37.1);
         // the first response has aged out of a five-minute window
         assert_eq!(rate_per_minute(&t.events, NOW, 5 * 60_000), 18.0);
+    }
+
+    #[test]
+    fn a_window_tally_counts_its_span_and_says_how_much_it_covers() {
+        let ev = |ts: i64, tokens: u64| Event { ts, cost: 0.01, output: 1, tokens, model: "m".into() };
+        let events = vec![ev(NOW - 3 * 3600_000, 100), ev(NOW - 3600_000, 200), ev(NOW, 300)];
+        let t = window_tally(&events, NOW - 2 * 3600_000, NOW, NOW);
+        assert_eq!((t.tokens, t.turns), (500, 2));
+        assert!((t.cost - 0.02).abs() < 1e-12);
+        assert_eq!(t.covered, 1.0);
+        // a week-long window with three hours of history is barely covered
+        let week = window_tally(&events, NOW - SEVEN_DAYS_MS, NOW, NOW);
+        assert!(week.covered < 0.02 && week.covered > 0.0);
+        // no history at all: nothing contradicts the window, as in the Electron store
+        assert_eq!(window_tally(&[], NOW - 60_000, NOW, NOW).covered, 1.0);
+        assert!(spend_since(&[], NOW).is_sign_positive());
+        assert!((spend_between(&events, NOW - 3600_000, NOW) - 0.02).abs() < 1e-12);
+        assert!((spend_since(&events, NOW) - 0.01).abs() < 1e-12);
     }
 
     #[test]
