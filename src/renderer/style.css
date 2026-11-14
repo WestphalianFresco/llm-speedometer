@@ -76,6 +76,10 @@
 html, body {
   background: transparent;
   overflow: hidden;
+  /* WebKit, which the Tauri build runs in, only knows the prefixed form:
+     without it a drag selects the text and paints it in the system
+     highlight colour. */
+  -webkit-user-select: none;
   user-select: none;
   cursor: default;
   font-family: var(--font);
