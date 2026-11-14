@@ -30,6 +30,8 @@ pub fn claude_projects() -> Option<PathBuf> { claude_home().map(|h| h.join("proj
 pub fn claude_sessions() -> Option<PathBuf> { claude_home().map(|h| h.join("sessions")) }
 pub fn claude_settings() -> Option<PathBuf> { claude_home().map(|h| h.join("settings.json")) }
 pub fn claude_credentials() -> Option<PathBuf> { claude_home().map(|h| h.join(".credentials.json")) }
+/// Appended to at every prompt, so its modified time is when the CLI was last used.
+pub fn claude_history() -> Option<PathBuf> { claude_home().map(|h| h.join("history.jsonl")) }
 
 pub fn claude_config() -> Option<PathBuf> {
     resolve_root(
@@ -46,6 +48,7 @@ pub fn codex_home() -> Option<PathBuf> {
 }
 pub fn codex_sessions() -> Option<PathBuf> { codex_home().map(|h| h.join("sessions")) }
 pub fn codex_auth() -> Option<PathBuf> { codex_home().map(|h| h.join("auth.json")) }
+pub fn codex_history() -> Option<PathBuf> { codex_home().map(|h| h.join("history.jsonl")) }
 
 /// `~/.llm-speedometer`: the bridge file, the plugin's reading, price overrides.
 pub fn speedometer_dir() -> Option<PathBuf> { home().map(|h| h.join(".llm-speedometer")) }

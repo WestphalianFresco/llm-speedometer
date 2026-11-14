@@ -9,8 +9,8 @@ use serde_json::{json, Value};
 use std::io::{Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::path::Path;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use crate::paths::{ollama_events, ollama_home};
 use crate::pricing::{cost_of_tokens, price_meta};
@@ -40,6 +40,76 @@ pub struct Event {
     pub output: f64,
     /// Time spent generating, for a tokens-per-second reading; 0 when unknown.
     pub eval_ms: f64,
+}
+
+// ---------- scan: what is on this machine ----------
+
+/// One model Ollama has on disk.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Model {
+    pub name: String,
+    pub size: f64,
+    /// Held in memory right now.
+    pub loaded: bool,
+}
+
+/// Asking again sooner than this is skipped: every call is a line in Ollama's log.
+const SCAN_TTL: Duration = Duration::from_secs(60);
+/// The gate has room for about this many gears.
+/// ponytail: a machine with more models shows the first seven by name.
+const MAX_GEARS: usize = 7;
+
+fn scanned() -> &'static Mutex<(Option<Instant>, Vec<Model>)> {
+    static CACHE: OnceLock<Mutex<(Option<Instant>, Vec<Model>)>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new((None, Vec::new())))
+}
+
+/// `/api/tags` lists what is installed and `/api/ps` what is in memory. By
+/// name, so a model keeps its gear when another one loads.
+pub fn parse_scan(tags: &Value, ps: &Value) -> Vec<Model> {
+    let names = |v: &Value| v["models"].as_array().cloned().unwrap_or_default();
+    let loaded: Vec<String> = names(ps).iter().filter_map(|m| m["name"].as_str().map(str::to_string)).collect();
+    let mut out: Vec<Model> = names(tags).iter().filter_map(|m| {
+        let name = m["name"].as_str()?.to_string();
+        Some(Model { size: m["size"].as_f64().unwrap_or(0.0), loaded: loaded.contains(&name), name })
+    }).collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+/// Ask Ollama what it has, so the page offers the models on this machine
+/// and not a list of ones it might have. Called outside any lock: it is a
+/// loopback request, refused at once when Ollama is not running.
+pub fn rescan(force: bool) {
+    if !ollama_home().map(|h| h.exists()).unwrap_or(false) {
+        return;
+    }
+    let fresh = scanned().lock().map(|c| c.0.is_some_and(|at| at.elapsed() < SCAN_TTL)).unwrap_or(false);
+    if fresh && !force {
+        return;
+    }
+    let agent = ureq::AgentBuilder::new().timeout(Duration::from_millis(800)).build();
+    let get = |path: &str| agent.get(&format!("http://127.0.0.1:{UPSTREAM_PORT}{path}")).call().ok().and_then(|r| r.into_json::<Value>().ok()).unwrap_or(Value::Null);
+    let found = parse_scan(&get("/api/tags"), &get("/api/ps"));
+    if let Ok(mut c) = scanned().lock() {
+        *c = (Some(Instant::now()), found);
+    }
+}
+
+/// The last scan's result.
+pub fn models() -> Vec<Model> {
+    scanned().lock().map(|c| c.1.clone()).unwrap_or_default()
+}
+
+/// The shifter's gears on this machine: one per installed model.
+pub fn gears_from(found: &[Model]) -> Value {
+    found.iter().take(MAX_GEARS).enumerate().map(|(i, m)| {
+        json!({ "gear": i + 1, "label": m.name, "detail": format!("{:.0} GB{}", m.size / 1e9, if m.loaded { ", in memory" } else { "" }) })
+    }).collect()
+}
+
+pub fn gears() -> Value {
+    gears_from(&models())
 }
 
 // ---------- capture: the relay ----------
@@ -217,28 +287,34 @@ impl OllamaStore {
         (tokens, turns)
     }
 
-    /// One row per model, newest first: the nearest thing a local model has
-    /// to a session.
-    fn models(&self, now: i64) -> Vec<Value> {
-        let mut seen: Vec<(&str, i64, i64)> = Vec::new(); // model, first, last
+    /// One row per model, the nearest thing a local model has to a session:
+    /// every model found on the machine, plus any the record remembers. In
+    /// memory first, then the most recently used.
+    fn rows(&self, now: i64, found: &[Model]) -> Vec<Value> {
+        let mut seen: Vec<(&str, Option<i64>, Option<i64>, bool)> = found.iter().map(|m| (m.name.as_str(), None, None, m.loaded)).collect(); // model, first, last, loaded
         for e in &self.events {
             match seen.iter_mut().find(|s| s.0 == e.model) {
-                Some(s) => s.2 = e.ts,
-                None => seen.push((e.model.as_str(), e.ts, e.ts)),
+                Some(s) => {
+                    s.1.get_or_insert(e.ts);
+                    s.2 = Some(e.ts);
+                }
+                None => seen.push((e.model.as_str(), Some(e.ts), Some(e.ts), false)),
             }
         }
-        seen.sort_by_key(|s| -s.2);
-        seen.iter().map(|(model, first, last)| json!({
+        seen.sort_by_key(|s| (!s.3, -s.2.unwrap_or(0)));
+        seen.iter().map(|(model, first, last, loaded)| json!({
             "pid": null, "sessionId": model, "name": model, "cwd": null,
-            "status": if now - last < BUSY_WINDOW_MS { "busy" } else { "idle" },
+            "status": if last.is_some_and(|l| now - l < BUSY_WINDOW_MS) { "busy" } else if *loaded { "idle" } else { "installed" },
             "kind": "cli", "updatedAt": last, "startedAt": first, "model": model,
         })).collect()
     }
 
     /// The payload's vendor half, in the shape the Codex store returns. A
     /// local model has no quota and no bill: both tanks read N/A, and the
-    /// plan is named so the page shows no per-token cost.
-    pub fn read(&self, now: i64) -> Value {
+    /// plan is named so the page shows no per-token cost. The model shown is
+    /// matched to the machine: the one in memory, else the last one used,
+    /// else the first one installed.
+    pub fn read(&self, now: i64, found: &[Model]) -> Value {
         let window = |label: &str| json!({ "percent": null, "source": "unsupported", "confidence": "unknown", "resetsAt": null, "anchorAt": null, "label": label });
         let budget = |span: i64| {
             let (tokens, turns, _) = self.tally(now - span, now);
@@ -252,7 +328,7 @@ impl OllamaStore {
                             "against": REFERENCE.1, "pricing": price_meta("anthropic") });
         let (trip, trip_turns) = self.trip();
         let last = self.events.last();
-        let model = last.map(|e| e.model.clone());
+        let model = found.iter().find(|m| m.loaded).map(|m| m.name.clone()).or(last.map(|e| e.model.clone())).or(found.first().map(|m| m.name.clone()));
         let since = now - RATE_WINDOW_MS;
         let recent_output: f64 = self.events.iter().filter(|e| e.ts >= since && e.ts <= now).map(|e| e.output).sum::<f64>() + 0.0;
         let odo = json!({ "total": total, "turns": turns, "files": if self.stamp.is_some_and(|s| s.1 > 0) { 1 } else { 0 },
@@ -281,7 +357,7 @@ impl OllamaStore {
             "configuredModelValue": model,
             "configuredModelFamily": null,
             "modelOptions": [],
-            "liveSessions": self.models(now),
+            "liveSessions": self.rows(now, found),
             "odometer": odo,
         })
     }
@@ -292,12 +368,19 @@ impl OllamaStore {
 pub fn detect() -> Value {
     let installed = ollama_home().map(|h| h.exists()).unwrap_or(false);
     let has_data = ollama_events().and_then(|f| std::fs::metadata(f).ok()).map(|m| m.len() > 0).unwrap_or(false);
+    let found = models();
     let note = if !installed {
         "Ollama not found on this device. Install it from ollama.com and pull a model.".to_string()
+    } else if found.is_empty() {
+        "Ollama is installed but is not answering, or has no models yet. Start it and pull one.".to_string()
     } else {
-        format!("Only chats sent through port {RELAY_PORT} are counted: OLLAMA_HOST=127.0.0.1:{RELAY_PORT} ollama run <model>")
+        let names: Vec<&str> = found.iter().map(|m| m.name.as_str()).collect();
+        format!("Found {}. Only chats sent through port {RELAY_PORT} are counted: OLLAMA_HOST=127.0.0.1:{RELAY_PORT} ollama run {}", names.join(", "), names[0])
     };
-    json!({ "present": installed, "usable": installed, "dataAvailable": has_data, "account": null, "note": note })
+    // in use now if a model is in memory, else when the relay last recorded a reply
+    let recorded = ollama_events().and_then(|f| std::fs::metadata(f).ok()).and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64).unwrap_or(0);
+    let last_active = if found.iter().any(|m| m.loaded) { crate::now_ms() } else { recorded };
+    json!({ "present": installed, "usable": installed, "dataAvailable": has_data, "account": null, "note": note, "lastActiveAt": last_active })
 }
 
 #[cfg(test)]
@@ -392,7 +475,7 @@ mod tests {
 
         let mut s = OllamaStore::default();
         s.refresh_from(&file, NOW);
-        let r = s.read(NOW);
+        let r = s.read(NOW, &[]);
         assert_eq!((r["odometer"]["total"].as_f64(), r["odometer"]["turns"].as_i64()), (Some(1300.0), Some(3)));
         assert_eq!((r["odometer"]["trip"].as_f64(), r["odometer"]["tripTurns"].as_i64()), (Some(1150.0), Some(2)), "the old sitting is not this trip");
         assert_eq!(r["tokensPerMinute"], 110.0, "1100 output tokens over the ten-minute window");
@@ -405,10 +488,43 @@ mod tests {
         assert_eq!(r["cost"]["saved"]["against"], "Opus 5.5");
         assert_eq!((r["session"]["model"].as_str(), r["session"]["company"].as_str()), (Some("qwen3.6:35b"), Some("Ollama")));
         assert_eq!((r["liveSessions"][0]["name"].as_str(), r["liveSessions"][0]["status"].as_str()), (Some("qwen3.6:35b"), Some("busy")));
-        assert_eq!((r["liveSessions"][1]["name"].as_str(), r["liveSessions"][1]["status"].as_str()), (Some("gpt-oss:20b"), Some("idle")));
+        assert_eq!((r["liveSessions"][1]["name"].as_str(), r["liveSessions"][1]["status"].as_str()), (Some("gpt-oss:20b"), Some("installed")));
         // nothing recorded yet reads as zeros, not as a failure
-        let empty = OllamaStore::default().read(NOW);
+        let empty = OllamaStore::default().read(NOW, &[]);
         assert_eq!((empty["odometer"]["total"].as_f64(), empty["tokensPerMinute"].as_f64(), empty["tokensPerSecond"].is_null()), (Some(0.0), Some(0.0), true));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Asks this machine's own Ollama; run with `-- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn real_ollama_on_this_machine() {
+        rescan(true);
+        println!("models={:?}", models());
+        println!("gears={}", gears());
+        println!("detect={}", detect());
+    }
+
+    #[test]
+    fn the_scan_names_what_is_installed_and_the_model_in_memory_is_the_one_shown() {
+        let tags = json!({ "models": [ { "name": "qwen3.6:35b", "size": 23_243_173_668u64 }, { "name": "gemma3:27b", "size": 17_000_000_000u64 }, { "size": 1 } ] });
+        let ps = json!({ "models": [ { "name": "gemma3:27b" } ] });
+        let found = parse_scan(&tags, &ps);
+        assert_eq!(found.iter().map(|m| (m.name.as_str(), m.loaded)).collect::<Vec<_>>(), vec![("gemma3:27b", true), ("qwen3.6:35b", false)]);
+        let gears = gears_from(&found);
+        assert_eq!((gears[0]["gear"].as_i64(), gears[0]["label"].as_str(), gears[0]["detail"].as_str()), (Some(1), Some("gemma3:27b"), Some("17 GB, in memory")));
+        assert_eq!((gears[1]["label"].as_str(), gears[1]["detail"].as_str()), (Some("qwen3.6:35b"), Some("23 GB")));
+        // Ollama not answering scans as nothing found, not as an error
+        assert!(parse_scan(&Value::Null, &Value::Null).is_empty());
+        assert_eq!(gears_from(&vec![found[0].clone(); 12]).as_array().unwrap().len(), MAX_GEARS);
+
+        // nothing recorded yet: the model in memory is the one shown, and both are listed
+        let r = OllamaStore::default().read(NOW, &found);
+        assert_eq!(r["session"]["model"], "gemma3:27b");
+        assert_eq!((r["liveSessions"][0]["name"].as_str(), r["liveSessions"][0]["status"].as_str()), (Some("gemma3:27b"), Some("idle")));
+        assert_eq!((r["liveSessions"][1]["name"].as_str(), r["liveSessions"][1]["status"].as_str()), (Some("qwen3.6:35b"), Some("installed")));
+        // nothing in memory: the first one installed stands in
+        let cold = parse_scan(&tags, &Value::Null);
+        assert_eq!(OllamaStore::default().read(NOW, &cold)["session"]["model"], "gemma3:27b");
     }
 }

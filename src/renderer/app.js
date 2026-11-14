@@ -2282,11 +2282,29 @@ function selectMake (id) {
 function renderGearbox (data) {
   if (!data.catalog) return
   const first = gbCatalog.length === 0
+  // The catalogue is what was found on this machine, and it changes while the
+  // app runs (a model is pulled, a CLI signs in), so the plate is redrawn when
+  // its gears differ rather than once at start.
+  const plate = () => JSON.stringify((gbProvider() || {}).gears || [])
+  const before = first ? null : plate()
+  const was = gbState
   gbCatalog = data.catalog
   gbState = data.gearbox || gbState
-  if (first || !gbProviderId) gbProviderId = gbState.providerId || gbCatalog[0].id
+  // The gate follows the shifter when the reading moves it to another make (a
+  // different provider was unlocked), and never points at a make that is not
+  // on this machine. Browsing the other makes by hand is left alone.
+  const known = id => gbCatalog.some(p => p.id === id)
+  if (first || !known(gbProviderId) || gbState.providerId !== was.providerId) {
+    gbProviderId = known(gbState.providerId) ? gbState.providerId : gbCatalog[0].id
+  }
 
-  if (first) buildGate()
+  if (first || plate() !== before) {
+    buildGate()
+  } else if (gbState.gear !== was.gear && !dragging && !clutchDown) {
+    // the model in use changed: the lever goes to its gear, unless a hand is on it
+    const home = gbPositions.find(p => p.gear === gbState.gear)
+    if (home) { placeLever(home.x, home.y); lever.lane = gbSlots.indexOf(home.x) }
+  }
   paintMake()
   markEngaged()
 }

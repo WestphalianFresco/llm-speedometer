@@ -69,10 +69,19 @@ fn configured_model() -> Option<String> {
     settings.get("model").and_then(|v| v.as_str()).map(str::to_string)
 }
 
+fn modified_ms(path: Option<PathBuf>) -> i64 {
+    path.and_then(|p| std::fs::metadata(p).ok()).and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+
+/// The providers found on this machine, the one used most recently first:
+/// the picker opens on what is actually in use and lists nothing that is
+/// not here. Only a machine with none of them is shown every option, so
+/// there is something to read about what to install.
 fn vendors(account: Option<&Account>, has_transcripts: bool) -> Value {
     let email = account.and_then(|a| a.email.as_deref());
     let signed_in = email.is_some();
-    let mut openai = json!({ "id": "openai", "name": "OpenAI", "product": "Codex CLI", "url": "https://chatgpt.com/", "supported": true, "signInHint": null });
+    let mut openai = json!({ "id": "openai", "name": "OpenAI", "product": "Codex CLI", "url": "https://chatgpt.com/", "supported": true, "signInHint": null,
+        "lastActiveAt": modified_ms(paths::codex_history()) });
     let mut ollama = json!({ "id": "ollama", "name": "Ollama", "product": "Local models", "url": "https://ollama.com/download", "supported": true,
         "signInHint": "Then reopen this app." });
     for (entry, found) in [(&mut openai, codex::detect()), (&mut ollama, ollama::detect())] {
@@ -82,16 +91,36 @@ fn vendors(account: Option<&Account>, has_transcripts: bool) -> Value {
             }
         }
     }
-    json!([
-        { "id": "anthropic", "name": "Anthropic", "product": "Claude Code", "url": "https://claude.ai/login",
+    let all = vec![
+        json!({ "id": "anthropic", "name": "Anthropic", "product": "Claude Code", "url": "https://claude.ai/login",
           "supported": true, "signInHint": "Run `claude` in a terminal and follow the sign-in prompt.",
-          "present": signed_in, "usable": signed_in && has_transcripts, "account": email,
-          "note": if !signed_in { "Not signed in on this machine." } else if has_transcripts { "Signed in. Usage and quota available." } else { "Signed in, but no transcripts found yet." } },
+          "present": signed_in, "usable": signed_in && has_transcripts, "account": email, "lastActiveAt": modified_ms(paths::claude_history()),
+          "note": if !signed_in { "Not signed in on this machine." } else if has_transcripts { "Signed in. Usage and quota available." } else { "Signed in, but no transcripts found yet." } }),
         openai,
         ollama,
-        { "id": "google", "name": "Google", "product": "Gemini CLI", "url": "https://gemini.google.com/", "supported": false, "signInHint": null,
-          "present": false, "usable": false, "account": null, "note": "Not supported." }
-    ])
+        json!({ "id": "google", "name": "Google", "product": "Gemini CLI", "url": "https://gemini.google.com/", "supported": false, "signInHint": null,
+          "present": false, "usable": false, "account": null, "note": "Not supported." }),
+    ];
+    let mut found: Vec<Value> = all.iter().filter(|v| is_found(v)).cloned().collect();
+    if found.is_empty() {
+        return Value::Array(all);
+    }
+    found.sort_by_key(|v| -v["lastActiveAt"].as_i64().unwrap_or(0));
+    Value::Array(found)
+}
+
+fn is_found(vendor: &Value) -> bool {
+    vendor["present"] == true || vendor["usable"] == true
+}
+
+/// The lever follows the model in use: when this vendor's plate has a gear
+/// with that model's name, the payload carries it as the shifter's state.
+fn follow_model(mut out: Value, vendor: &str) -> Value {
+    let gear = out["configuredModel"].as_str().and_then(|label| gearbox::gear_for(&out["catalog"], vendor, label, &out["gearbox"]["previous"]));
+    if let Some(gear) = gear {
+        out["gearbox"] = gear;
+    }
+    out
 }
 
 /// Re-read the transcripts and the plugin's file. Cheap: only changed files are parsed.
@@ -139,9 +168,13 @@ fn payload(app: &AppHandle, state: &AppState) -> Value {
     let deck = deck_status(app, state);
     let dark = main_window(app).and_then(|w| w.theme().ok()).map(|t| t == Theme::Dark).unwrap_or(false);
 
+    // what was found here decides what the page offers: the picker's list and the shifter's plates
+    let vendor_list = vendors(account.as_ref(), has_transcripts);
+    let found: Vec<String> = vendor_list.as_array().map(|l| l.iter().filter(|v| is_found(v)).filter_map(|v| v["id"].as_str().map(str::to_string)).collect()).unwrap_or_default();
+
     let Ok(core) = state.core.lock() else { return Value::Null };
     let common = json!({
-        "vendors": vendors(account.as_ref(), has_transcripts),
+        "vendors": vendor_list,
         "appVersion": app.package_info().version.to_string(),
         "unlocked": core.ui.unlocked,
         "vendor": core.ui.vendor,
@@ -150,7 +183,7 @@ fn payload(app: &AppHandle, state: &AppState) -> Value {
         "gearbox": core.ui.gearbox,
         // the catalogue travels with the payload so the page draws gears from
         // the same list the backend validates against
-        "catalog": gearbox::providers(),
+        "catalog": gearbox::catalog(&found),
         "darkMode": dark,
         // a dev checkout run through `tauri dev` must not register itself at login
         "canOpenAtLogin": !cfg!(debug_assertions),
@@ -166,11 +199,11 @@ fn payload(app: &AppHandle, state: &AppState) -> Value {
     };
     // Codex: the rollouts carry everything, quota included; nothing to merge in
     if core.vendor == "openai" {
-        return merge(core.codex.read(now), &common);
+        return follow_model(merge(core.codex.read(now), &common), "openai");
     }
-    // local models: the relay's file is the whole record
+    // local models: the relay's file is the whole record, the scan says which models exist
     if core.vendor == "ollama" {
-        return merge(core.ollama.read(now), &common);
+        return follow_model(merge(core.ollama.read(now, &ollama::models()), &common), "ollama");
     }
 
     let scan = &core.scan;
@@ -183,7 +216,6 @@ fn payload(app: &AppHandle, state: &AppState) -> Value {
         "account": account.as_ref().map(|a| json!({ "email": a.email, "org": a.org })),
         "session": session::read_session(&scan.last, account.as_ref()),
         "liveSessions": live_sessions,
-        "vendors": vendors(account.as_ref(), has_transcripts),
         "odometer": {
             "total": scan.total, "turns": scan.turns, "files": scan.files,
             "trip": scan.trip, "tripTurns": scan.trip_turns, "tripSessionId": scan.trip_session_id,
@@ -195,7 +227,7 @@ fn payload(app: &AppHandle, state: &AppState) -> Value {
     });
     let mut out = merge(merge(out, &official_view), &common);
     out["budget"]["lifetime"] = json!({ "usedTokens": scan.total, "turns": scan.turns });
-    out
+    follow_model(out, "anthropic")
 }
 
 fn push(app: &AppHandle) {
@@ -219,6 +251,8 @@ fn push(app: &AppHandle) {
 fn tick(app: &AppHandle, force_official: bool) {
     let state = app.state::<AppState>();
     let now = now_ms();
+    // which local models exist: asked before the lock is taken, at most once a minute
+    ollama::rescan(false);
     if let Ok(mut core) = state.core.lock() {
         refresh_local(&mut core, now);
     }
@@ -675,7 +709,11 @@ pub fn run() {
             let relay_app = handle.clone();
             let relaying = ollama::start_relay(move || {
                 let a = relay_app.clone();
-                std::thread::spawn(move || tick(&a, false));
+                std::thread::spawn(move || {
+                    // a reply means a model is now in memory: look again without waiting out the minute
+                    ollama::rescan(true);
+                    tick(&a, false)
+                });
             });
             if !relaying {
                 eprintln!("[ollama] port {} is taken; local-model tokens will not be counted", ollama::RELAY_PORT);
@@ -694,4 +732,29 @@ pub fn run() {
                 shutdown(app);
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What this machine's picker and shifter would be offered; run with `-- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn real_vendors_on_this_machine() {
+        ollama::rescan(true);
+        let account = read_account();
+        let list = vendors(account.as_ref(), paths::claude_projects().map(|p| p.is_dir()).unwrap_or(false));
+        for v in list.as_array().unwrap() {
+            println!("vendor {} usable={} lastActiveAt={} note={}", v["id"], v["usable"], v["lastActiveAt"], v["note"]);
+        }
+        let found: Vec<String> = list.as_array().unwrap().iter().filter(|v| is_found(v)).filter_map(|v| v["id"].as_str().map(str::to_string)).collect();
+        let catalog = gearbox::catalog(&found);
+        for p in catalog.as_array().unwrap() {
+            println!("plate {} gears={}", p["id"], p["gears"].as_array().unwrap().iter().map(|g| g["label"].as_str().unwrap_or("")).collect::<Vec<_>>().join(" | "));
+        }
+        let store = ollama::OllamaStore::default().read(now_ms(), &ollama::models());
+        let out = follow_model(json!({ "configuredModel": store["configuredModel"], "catalog": catalog, "gearbox": ui::default_gearbox() }), "ollama");
+        println!("lever on ollama: {}", out["gearbox"]);
+    }
 }

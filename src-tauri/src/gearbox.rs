@@ -42,10 +42,9 @@ pub fn providers() -> &'static Value {
             { "gear": 3, "label": "GPT-5.6 Sol", "detail": "previous" }, { "gear": 4, "label": "GPT-5.3-Codex", "detail": "coding" },
             { "gear": 5, "label": "GPT-6 Luna", "detail": "fast" } ] },
         { "id": "ollama", "emoji": "🦙", "name": "Ollama", "product": "Local models", "accent": "#7C6F64", "configurable": false,
-          "note": "Ollama runs whichever model a request names, so a gear here records your choice without changing anything.",
-          "gears": [
-            { "gear": 1, "label": "Qwen 3.6 35B", "detail": "general, fast" }, { "gear": 2, "label": "Qwen 3.8 27B", "detail": "newer, vision" },
-            { "gear": 3, "label": "gpt-oss 20B", "detail": "reasoning" }, { "gear": 4, "label": "Gemma 3 27B", "detail": "general" } ] },
+          "note": "One gear per model found on this machine. Ollama runs whichever model a request names, so the lever follows the model in use rather than setting it.",
+          // filled in from what Ollama has installed: see `all_makes`
+          "gears": [] },
         { "id": "google", "emoji": "✨", "name": "Google", "product": "Gemini CLI", "accent": "#4285F4", "configurable": false,
           "note": "No reader is implemented for Gemini CLI yet, so this gate records a choice only.",
           "gears": [
@@ -69,6 +68,32 @@ pub fn providers() -> &'static Value {
     ]))
 }
 
+/// Every make, with Ollama's gears being the models it has installed.
+pub fn all_makes() -> Value {
+    let mut list = providers().clone();
+    if let Some(local) = list.as_array_mut().and_then(|l| l.iter_mut().find(|p| p["id"] == "ollama")) {
+        local["gears"] = crate::ollama::gears();
+    }
+    list
+}
+
+/// What the page draws: only the makes found on this machine, so the shifter
+/// offers what can actually be driven. With nothing found, every make is
+/// shown rather than an empty plate.
+pub fn catalog(found: &[String]) -> Value {
+    let all = all_makes();
+    let kept: Vec<Value> = all.as_array().map(|l| l.iter().filter(|p| found.iter().any(|f| p["id"] == f.as_str())).cloned().collect()).unwrap_or_default();
+    if kept.is_empty() { all } else { Value::Array(kept) }
+}
+
+/// The gear on a make's plate whose label is this model's, as shifter state:
+/// how the lever follows the model in use.
+pub fn gear_for(catalog: &Value, provider_id: &str, label: &str, previous: &Value) -> Option<Value> {
+    let provider = catalog.as_array()?.iter().find(|p| p["id"] == provider_id)?;
+    let gear = provider["gears"].as_array()?.iter().find(|g| g["label"] == label)?;
+    Some(json!({ "providerId": provider_id, "gear": gear["gear"], "label": label, "previous": previous }))
+}
+
 pub struct Found {
     pub configurable: bool,
     pub label: String,
@@ -76,7 +101,8 @@ pub struct Found {
 }
 
 pub fn find_gear(provider_id: &str, gear: i64) -> Option<Found> {
-    let provider = providers().as_array()?.iter().find(|p| p["id"] == provider_id)?;
+    let makes = all_makes();
+    let provider = makes.as_array()?.iter().find(|p| p["id"] == provider_id)?;
     let g = provider["gears"].as_array()?.iter().find(|g| g["gear"].as_i64() == Some(gear))?;
     Some(Found {
         configurable: provider["configurable"].as_bool().unwrap_or(false),
@@ -180,6 +206,19 @@ mod tests {
         assert!(find_gear("anthropic", 2).unwrap().apply.as_deref() == Some("opus"));
         assert!(find_gear("openai", 1).unwrap().apply.is_none());
         assert!(find_gear("anthropic", 9).is_none());
+    }
+
+    #[test]
+    fn the_page_gets_only_the_makes_found_and_the_lever_follows_the_model() {
+        let ids = |c: &Value| c.as_array().unwrap().iter().map(|p| p["id"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+        let found = catalog(&["ollama".to_string(), "anthropic".to_string()]);
+        assert_eq!(ids(&found), vec!["anthropic", "ollama"], "the plate's own order is kept");
+        assert_eq!(ids(&catalog(&[])).len(), providers().as_array().unwrap().len(), "nothing found shows everything");
+        let prev = json!({ "providerId": "anthropic", "gear": 4, "label": "Haiku 4.5" });
+        let g = gear_for(&found, "anthropic", "Sonnet 5.5", &prev).unwrap();
+        assert_eq!((g["gear"].as_i64(), g["providerId"].as_str(), g["previous"]["gear"].as_i64()), (Some(3), Some("anthropic"), Some(4)));
+        assert!(gear_for(&found, "anthropic", "a model with no gear", &prev).is_none());
+        assert!(gear_for(&found, "openai", "GPT-6 Astra", &prev).is_none(), "a make that was not found has no plate");
     }
 
     #[test]
