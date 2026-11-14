@@ -1321,6 +1321,30 @@ function renderWeekMeta (data) {
  */
 function renderCost (data) {
   const cost = data.cost
+  // A local model bills nothing, so its row says what it does have: how fast
+  // the last answer came, and what the same tokens list for at a hosted model.
+  if (cost && cost.saved) {
+    const tps = data.tokensPerSecond
+    const saved = cost.saved
+    nodes.costRow.classList.remove('empty')
+    nodes.costLabel.textContent = 'LOCAL'
+    nodes.costWeek.hidden = !tps
+    nodes.costWeek.textContent = tps ? Math.round(tps) + ' tok/s' : ''
+    nodes.costSep.hidden = !tps
+    nodes.costBilled.hidden = false
+    nodes.costBilled.textContent = money(saved.sevenDay || 0) + ' saved'
+    nodes.costRow.title = [
+      'LOCAL',
+      '  last answer  ' + (tps ? tps.toFixed(1) + ' tokens per second' : 'not measured yet'),
+      '  this week    ' + money(saved.sevenDay || 0) + ' at ' + saved.against + ' list price',
+      '  lifetime     ' + money(saved.lifetime || 0),
+      '',
+      'Nothing is billed for a model running on this machine. The dollars are',
+      'what the same token counts would list for at ' + saved.against + ', as a scale',
+      'for the work; tokenizers differ, so read them as an estimate.'
+    ].join(String.fromCharCode(10))
+    return
+  }
   const spend = cost && cost.official
   const billed = spend && spend.enabled !== false && spend.usedUsd > 0 ? spend.usedUsd : 0
   const onPlan = Boolean(cost && cost.plan)

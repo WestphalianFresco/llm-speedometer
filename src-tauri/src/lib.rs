@@ -7,6 +7,7 @@ mod credentials;
 mod gearbox;
 mod local;
 mod official;
+mod ollama;
 mod paths;
 mod platform;
 mod pricing;
@@ -39,11 +40,12 @@ const DECK_SEEN_MS: i64 = 15 * 1000;
 /// Everything a tick reads and writes, behind one lock. The usage endpoint
 /// is polled outside it: a 15 s network wait must not hold up a command.
 struct Core {
-    /// Which provider's store is mounted: `anthropic` or `openai`.
+    /// Which provider's store is mounted: `anthropic`, `openai` or `ollama`.
     vendor: String,
     scanner: Scanner,
     store: UsageStore,
     codex: codex::CodexStore,
+    ollama: ollama::OllamaStore,
     ui: UiState,
     scan: Scan,
 }
@@ -71,9 +73,13 @@ fn vendors(account: Option<&Account>, has_transcripts: bool) -> Value {
     let email = account.and_then(|a| a.email.as_deref());
     let signed_in = email.is_some();
     let mut openai = json!({ "id": "openai", "name": "OpenAI", "product": "Codex CLI", "url": "https://chatgpt.com/", "supported": true, "signInHint": null });
-    if let (Some(a), Some(b)) = (openai.as_object_mut(), codex::detect().as_object()) {
-        for (k, v) in b {
-            a.insert(k.clone(), v.clone());
+    let mut ollama = json!({ "id": "ollama", "name": "Ollama", "product": "Local models", "url": "https://ollama.com/download", "supported": true,
+        "signInHint": "Then reopen this app." });
+    for (entry, found) in [(&mut openai, codex::detect()), (&mut ollama, ollama::detect())] {
+        if let (Some(a), Some(b)) = (entry.as_object_mut(), found.as_object()) {
+            for (k, v) in b {
+                a.insert(k.clone(), v.clone());
+            }
         }
     }
     json!([
@@ -82,6 +88,7 @@ fn vendors(account: Option<&Account>, has_transcripts: bool) -> Value {
           "present": signed_in, "usable": signed_in && has_transcripts, "account": email,
           "note": if !signed_in { "Not signed in on this machine." } else if has_transcripts { "Signed in. Usage and quota available." } else { "Signed in, but no transcripts found yet." } },
         openai,
+        ollama,
         { "id": "google", "name": "Google", "product": "Gemini CLI", "url": "https://gemini.google.com/", "supported": false, "signInHint": null,
           "present": false, "usable": false, "account": null, "note": "Not supported." }
     ])
@@ -91,6 +98,10 @@ fn vendors(account: Option<&Account>, has_transcripts: bool) -> Value {
 fn refresh_local(core: &mut Core, now: i64) {
     if core.vendor == "openai" {
         core.codex.refresh_local(now);
+        return;
+    }
+    if core.vendor == "ollama" {
+        core.ollama.refresh_local(now);
         return;
     }
     if let Some(projects) = paths::claude_projects() {
@@ -156,6 +167,10 @@ fn payload(app: &AppHandle, state: &AppState) -> Value {
     // Codex: the rollouts carry everything, quota included; nothing to merge in
     if core.vendor == "openai" {
         return merge(core.codex.read(now), &common);
+    }
+    // local models: the relay's file is the whole record
+    if core.vendor == "ollama" {
+        return merge(core.ollama.read(now), &common);
     }
 
     let scan = &core.scan;
@@ -540,7 +555,7 @@ pub fn run() {
     let ui_path = data_dir.as_ref().map(|d| d.join("ui.json"));
     let ui_state = UiState::load(ui_path.as_ref());
     // the remembered vendor is mounted even though the app opens locked
-    let vendor = ui_state.vendor.clone().filter(|v| v == "openai").unwrap_or_else(|| "anthropic".into());
+    let vendor = ui_state.vendor.clone().filter(|v| v == "openai" || v == "ollama").unwrap_or_else(|| "anthropic".into());
     let store = UsageStore::new(data_dir.as_ref().map(|d| d.join("state.json")), paths::speedometer_dir().map(|d| d.join("reading.json")));
 
     tauri::Builder::default()
@@ -550,7 +565,7 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .manage(updater::Slot::default())
         .manage(AppState {
-            core: Mutex::new(Core { vendor, scanner: Scanner::default(), store, codex: codex::CodexStore::default(), ui: ui_state, scan: Scan::default() }),
+            core: Mutex::new(Core { vendor, scanner: Scanner::default(), store, codex: codex::CodexStore::default(), ollama: ollama::OllamaStore::default(), ui: ui_state, scan: Scan::default() }),
             official: Mutex::new(OfficialProvider::default()),
             bridge: Mutex::new(None),
             tray: Mutex::new(None),
@@ -656,6 +671,15 @@ pub fn run() {
                 }
             });
             apply_settings(&handle);
+            // the relay that counts local-model tokens; a reply it records moves the gauges at once
+            let relay_app = handle.clone();
+            let relaying = ollama::start_relay(move || {
+                let a = relay_app.clone();
+                std::thread::spawn(move || tick(&a, false));
+            });
+            if !relaying {
+                eprintln!("[ollama] port {} is taken; local-model tokens will not be counted", ollama::RELAY_PORT);
+            }
             let ticker = handle.clone();
             std::thread::spawn(move || loop {
                 std::thread::sleep(TICK);

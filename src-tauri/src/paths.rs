@@ -50,6 +50,11 @@ pub fn codex_auth() -> Option<PathBuf> { codex_home().map(|h| h.join("auth.json"
 /// `~/.llm-speedometer`: the bridge file, the plugin's reading, price overrides.
 pub fn speedometer_dir() -> Option<PathBuf> { home().map(|h| h.join(".llm-speedometer")) }
 
+/// Ollama's own directory: its presence is how an install is recognised.
+pub fn ollama_home() -> Option<PathBuf> { home().map(|h| h.join(".ollama")) }
+/// One line per reply the relay saw; Ollama itself records none.
+pub fn ollama_events() -> Option<PathBuf> { speedometer_dir().map(|d| d.join("ollama.jsonl")) }
+
 /// Where the Electron build kept its state, so the learned calibration carries
 /// over instead of starting from nothing.
 pub fn app_data_dir() -> Option<PathBuf> {

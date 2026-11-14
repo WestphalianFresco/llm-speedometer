@@ -41,6 +41,11 @@ pub fn providers() -> &'static Value {
             { "gear": 1, "label": "GPT-6 Astra", "detail": "flagship" }, { "gear": 2, "label": "GPT-6.1 Sol", "detail": "near-flagship, cheaper" },
             { "gear": 3, "label": "GPT-5.6 Sol", "detail": "previous" }, { "gear": 4, "label": "GPT-5.3-Codex", "detail": "coding" },
             { "gear": 5, "label": "GPT-6 Luna", "detail": "fast" } ] },
+        { "id": "ollama", "emoji": "🦙", "name": "Ollama", "product": "Local models", "accent": "#7C6F64", "configurable": false,
+          "note": "Ollama runs whichever model a request names, so a gear here records your choice without changing anything.",
+          "gears": [
+            { "gear": 1, "label": "Qwen 3.6 35B", "detail": "general, fast" }, { "gear": 2, "label": "Qwen 3.8 27B", "detail": "newer, vision" },
+            { "gear": 3, "label": "gpt-oss 20B", "detail": "reasoning" }, { "gear": 4, "label": "Gemma 3 27B", "detail": "general" } ] },
         { "id": "google", "emoji": "✨", "name": "Google", "product": "Gemini CLI", "accent": "#4285F4", "configurable": false,
           "note": "No reader is implemented for Gemini CLI yet, so this gate records a choice only.",
           "gears": [
