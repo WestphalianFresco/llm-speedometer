@@ -16,16 +16,28 @@ type Engine = Parameters<Extract<Parameters<typeof test>[1], (...a: never[]) => 
 type Options = { limits?: unknown[]; isPlaced?: boolean; hasClock?: boolean; hasHome?: boolean; writeFails?: boolean }
 type Write = { path: string; text: string }
 
+// The file as another session running 0.1.1 leaves it: its week, when it measured it.
+const other = (percentUsed: number, at: number) =>
+  JSON.stringify({ v: 1, at, source: 'claude-code', sevenDay: { percentLeft: 100 - percentUsed, resetsAt: null, at } })
+
 function engine ($: Engine, on: On, { limits = LIMITS, isPlaced = true, hasClock = true, hasHome = true, writeFails = false }: Options = {}) {
   // Without a clock, the bottom of the chain throws on every $.clock call.
   const clock = hasClock ? mock.clock(on, { now: NOW }) : undefined
   const statuses: (string | undefined)[] = []
   const tails: (string | undefined)[] = []
   const writes: Write[] = []
+  // One file, as on a real disk: what was last written is what is read, by
+  // this session or (set from a test) by another.
+  const disk: { text?: string } = {}
   mock.env(on, hasHome ? { HOME: '/home/u' } : {})
+  on('fs.read', () => {
+    if (disk.text === undefined) throw new Error('ENOENT')
+    return { value: disk.text }
+  })
   on('fs.write', (_, e) => {
     if (writeFails) throw new Error('disk full')
     writes.push({ path: e.path, text: e.text })
+    disk.text = e.text
     return { value: undefined }
   })
   on('command.register', () => ({ value: { command: 'speedometer' } }))
@@ -54,7 +66,7 @@ function engine ($: Engine, on: On, { limits = LIMITS, isPlaced = true, hasClock
     await ui.unmount()
     return tails.at(-1)
   }
-  return { clock, statuses, tail, writes, file: () => JSON.parse(writes.at(-1)?.text ?? 'null') }
+  return { clock, disk, statuses, tail, writes, file: () => JSON.parse(writes.at(-1)?.text ?? 'null') }
 }
 
 const start = ($: Engine) => $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
@@ -211,10 +223,11 @@ test('the reading is written where the Stream Deck looks, on start, each turn, e
   const { writes, file } = engine($, on)
   await start($)
   expect(writes.at(-1)?.path).toBe('/home/u/.llm-speedometer/reading.json')
+  // What a session starts with has no age anyone knows: at 0.
   expect(file()).toEqual({
     v: 1, at: NOW, source: 'claude-code', tokensPerMinute: 0,
-    fiveHour: { percentLeft: 60, resetsAt: NOW + HOUR, source: 'official', tokensLeft: null, tokensUsed: null },
-    sevenDay: { percentLeft: 91, resetsAt: NOW + 10 * HOUR, source: 'official', tokensLeft: null, tokensUsed: null },
+    fiveHour: { percentLeft: 60, resetsAt: NOW + HOUR, source: 'official', tokensLeft: null, tokensUsed: null, at: 0 },
+    sevenDay: { percentLeft: 91, resetsAt: NOW + 10 * HOUR, source: 'official', tokensLeft: null, tokensUsed: null, at: 0 },
     costWeek: null, lifetimeTokens: null, tripTokens: 0
   })
   await $.turn.complete(turn(USAGE))
@@ -222,8 +235,47 @@ test('the reading is written where the Stream Deck looks, on start, each turn, e
   expect(file().tripTokens).toBe(2150)
   await $.session.measure(measure([{ kind: 'seven_day', percentUsed: 50 }]))
   expect(file().sevenDay.percentLeft).toBe(50)
+  expect(file().sevenDay.at).toBe(NOW)
   expect(file().fiveHour.percentLeft).toBe(null)
   expect(writes.length).toBe(3)
+})
+
+test('an idle session takes on what another measured since; a stale file does not undo its own', async ($, on) => {
+  const { clock, disk, file, tail } = engine($, on, { limits: [{ kind: 'seven_day', percentUsed: 18 }] })
+  await start($)
+  expect(await tail()).toBe('WK 82% left')
+  // Another session gets a reply: 26% used now. This one hears of it at its next tick.
+  disk.text = other(26, NOW + 1000)
+  await clock!.advance(30_000)
+  expect(await tail()).toBe('WK 74% left')
+  expect([file().sevenDay.percentLeft, file().sevenDay.at]).toEqual([74, NOW + 1000])
+  // This one measures 27%; a session that slept through that writes its 26% back.
+  await $.session.measure(measure([{ kind: 'seven_day', percentUsed: 27 }]))
+  disk.text = other(26, NOW + 1000)
+  await clock!.advance(30_000)
+  expect(await tail()).toBe('WK 73% left')
+  expect(file().sevenDay.percentLeft).toBe(73)
+})
+
+test('a session that starts with no reading shows the one in the file; one with no stamp is left alone', async ($, on) => {
+  const { clock, disk, tail } = engine($, on, { limits: [] })
+  // 0.1.0 stamped no tank: how old its figure is, nobody knows.
+  disk.text = JSON.stringify({ v: 1, at: NOW, source: 'claude-code', sevenDay: { percentLeft: 88, resetsAt: null } })
+  await start($)
+  expect(await tail()).toBe(undefined)
+  disk.text = other(26, NOW - HOUR)
+  await clock!.advance(30_000)
+  expect(await tail()).toBe('WK 74% left')
+})
+
+test('a measurement in which no window moved keeps what the session holds', async ($, on) => {
+  const { clock, disk, tail } = engine($, on, { limits: [{ kind: 'seven_day', percentUsed: 18 }] })
+  await start($)
+  disk.text = other(26, NOW + 1000)
+  await clock!.advance(30_000)
+  // A turn cut short before any reply: the engine still holds its 18% of hours ago.
+  await $.session.measure({ ...measure([{ kind: 'seven_day', percentUsed: 18 }]), changed: ['context'] })
+  expect(await tail()).toBe('WK 74% left')
 })
 
 test('an exit leaves a reading with no rate; /clear leaves one with no trip', async ($, on) => {

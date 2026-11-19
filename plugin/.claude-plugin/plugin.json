@@ -1,6 +1,6 @@
 {
   "name": "llm-speedometer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Quota left, output rate and this session's tokens, in the status line and a pane",
   "types": "./types/index.d.ts",
   "author": {

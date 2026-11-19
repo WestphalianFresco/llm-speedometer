@@ -16,24 +16,43 @@ export type Tank = {
   left: number | null
   resetsInMs: number | null
   isReset: boolean
+  /** When the reading was measured, ms; 0 when nobody knows. */
+  at: number
 }
 
 /** A token count from an untrusted field: anything but a finite positive number is 0. */
 export const count = (n: unknown): number =>
   typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : 0
 
-/** Only the fields kept, so state never holds whatever else the engine adds. */
-export function toLimits (raw: unknown): Limit[] {
+/**
+ * Only the fields kept, so state never holds whatever else the engine adds.
+ * `at` stamps a reading fresh off the engine; without it each reading keeps
+ * the stamp it carries, or 0 when it carries none.
+ */
+export function toLimits (raw: unknown, at?: number): Limit[] {
   if (!Array.isArray(raw)) return []
   const out: Limit[] = []
   for (const l of raw) {
     if (!l || typeof l !== 'object' || typeof l.kind !== 'string' || !l.kind) continue
     if (typeof l.percentUsed !== 'number' || !Number.isFinite(l.percentUsed)) continue
+    const stamp = at ?? count(l.at)
     out.push(typeof l.resetsAt === 'string'
-      ? { kind: l.kind, percentUsed: l.percentUsed, resetsAt: l.resetsAt }
-      : { kind: l.kind, percentUsed: l.percentUsed })
+      ? { kind: l.kind, percentUsed: l.percentUsed, resetsAt: l.resetsAt, at: stamp }
+      : { kind: l.kind, percentUsed: l.percentUsed, at: stamp })
   }
   return out
+}
+
+/**
+ * The quota is the account's, so two sessions' readings are of the same
+ * windows: per window the later measurement wins, and a tie goes to `mine`.
+ */
+export function merge (mine: unknown, theirs: unknown): Limit[] {
+  const byKind = new Map<string, Limit>()
+  for (const l of [...toLimits(theirs), ...toLimits(mine)]) {
+    if (l.at >= (byKind.get(l.kind)?.at ?? 0)) byKind.set(l.kind, l)
+  }
+  return [...byKind.values()]
 }
 
 export function tanks (raw: unknown, now: number): Tank[] {
@@ -53,7 +72,8 @@ export function tanks (raw: unknown, now: number): Tank[] {
         label: LABELS[l.kind] ?? l.kind.slice(0, 12),
         left: isReset ? null : Math.min(100, Math.max(0, 100 - l.percentUsed)),
         resetsInMs: hasReset && !isReset ? resetAt - now : null,
-        isReset
+        isReset,
+        at: l.at
       }
     })
 }
@@ -120,14 +140,15 @@ export function hintText (list: readonly Tank[], perMin: number): string | undef
 
 /**
  * What a Stream Deck key, or any local reader, picks up while the app is not
- * running: the shape of the app's own GET /v1/reading, `resetsAt` in ms.
+ * running: the shape of the app's own GET /v1/reading, `resetsAt` in ms, and
+ * on each tank the `at` it was measured (the top `at` is when this was written).
  */
 export function readingFile (list: readonly Tank[], perMin: number, trip: Trip, now: number): string {
   const tank = (kind: string) => {
     const t = list.find(x => x.kind === kind)
     return t && t.left !== null
       ? { percentLeft: t.left, resetsAt: t.resetsInMs === null ? null : now + t.resetsInMs,
-          source: 'official', tokensLeft: null, tokensUsed: null }
+          source: 'official', tokensLeft: null, tokensUsed: null, at: t.at }
       : { percentLeft: null, resetsAt: null, source: null, tokensLeft: null, tokensUsed: null }
   }
   return JSON.stringify({
@@ -141,6 +162,31 @@ export function readingFile (list: readonly Tank[], perMin: number, trip: Trip, 
     lifetimeTokens: null,
     tripTokens: count(trip.tokens)
   })
+}
+
+/**
+ * The file read back as limits: what the sessions sharing it have measured.
+ * A tank with no stamp (0.1.0 wrote none) or one from the future says nothing
+ * about how fresh it is, so it is left out; so is a file that is not ours.
+ */
+export function fromReadingFile (text: unknown, now: number): Limit[] {
+  try {
+    const r = JSON.parse(String(text))
+    if (!r || r.v !== 1 || r.source !== 'claude-code') return []
+    const out: Limit[] = []
+    for (const [key, kind] of [['fiveHour', 'five_hour'], ['sevenDay', 'seven_day']] as const) {
+      const t = r[key]
+      const at = count(t?.at)
+      if (!at || at > now || typeof t.percentLeft !== 'number' || !Number.isFinite(t.percentLeft)) continue
+      const percentUsed = 100 - t.percentLeft
+      out.push(typeof t.resetsAt === 'number'
+        ? { kind, percentUsed, resetsAt: new Date(t.resetsAt).toISOString(), at }
+        : { kind, percentUsed, at })
+    }
+    return out
+  } catch {
+    return [] // not JSON, or a reset time no date can hold
+  }
 }
 
 export function tankRow (t: Tank, width: number): string {

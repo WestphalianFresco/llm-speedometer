@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import {
   bar, compact, count, countdown, MAX_TURNS, prune, rate, RATE_WINDOW_MS,
-  hintText, readingFile, tankRow, tanks, toLimits
+  fromReadingFile, hintText, merge, readingFile, tankRow, tanks, toLimits
 } from '../hooks/gauge'
 
 const NOW = Date.parse('2026-11-05T12:00:00Z')
@@ -85,9 +85,27 @@ test('tanks: a reading from before its reset is not shown as current', () => {
   expect(tankRow(t!, 10)).toContain('waiting for the next reply')
 })
 
-test('toLimits keeps only the three fields', () => {
-  expect(toLimits([{ kind: 'five_hour', percentUsed: 1, resetsAt: 'x', secret: 'y' }]))
-    .toEqual([{ kind: 'five_hour', percentUsed: 1, resetsAt: 'x' }])
+test('toLimits keeps only its own fields, and stamps a reading fresh off the engine', () => {
+  const raw = [{ kind: 'five_hour', percentUsed: 1, resetsAt: 'x', secret: 'y' }]
+  expect(toLimits(raw)).toEqual([{ kind: 'five_hour', percentUsed: 1, resetsAt: 'x', at: 0 }])
+  expect(toLimits(raw, NOW)[0]?.at).toBe(NOW)
+  expect(toLimits([{ kind: 'five_hour', percentUsed: 1, at: NOW }])[0]?.at).toBe(NOW)
+  expect(toLimits([{ kind: 'five_hour', percentUsed: 1, at: 'yesterday' }])[0]?.at).toBe(0)
+})
+
+test('merge: per window the later measurement wins, a tie goes to mine, junk adds nothing', () => {
+  const wk = (percentUsed: number, at = 0) => ({ kind: 'seven_day', percentUsed, at })
+  // An idle session still holding 18% used meets a reading of 26% taken since.
+  expect(merge([wk(18, NOW - 12 * HOUR)], [wk(26, NOW)])).toEqual([wk(26, NOW)])
+  // The other way round: a stale reading must not undo a fresh one.
+  expect(merge([wk(26, NOW)], [wk(18, NOW - 12 * HOUR)])).toEqual([wk(26, NOW)])
+  // Age unknown loses to any real measurement; equal ages keep mine.
+  expect(merge([wk(18)], [wk(26, 1)])).toEqual([wk(26, 1)])
+  expect(merge([wk(18)], [wk(26)])).toEqual([wk(18)])
+  // A window only one side has is kept.
+  const h5 = { kind: 'five_hour', percentUsed: 40, at: NOW }
+  expect(merge([wk(26, NOW)], [h5])).toEqual([h5, wk(26, NOW)])
+  expect(merge('nope', [null, { kind: 'seven_day' }])).toEqual([])
 })
 
 test('hint: says nothing when idle with no reading, never rounds headroom up', () => {
@@ -157,10 +175,30 @@ test('readingFile: the shape of the app\'s /v1/reading, resetsAt in ms', () => {
   const r = JSON.parse(readingFile(list, 96.4, { tokens: 2150, turns: 1 }, NOW))
   expect(r).toEqual({
     v: 1, at: NOW, source: 'claude-code', tokensPerMinute: 96,
-    fiveHour: { percentLeft: 60, resetsAt: NOW + HOUR, source: 'official', tokensLeft: null, tokensUsed: null },
-    sevenDay: { percentLeft: 90.5, resetsAt: null, source: 'official', tokensLeft: null, tokensUsed: null },
+    fiveHour: { percentLeft: 60, resetsAt: NOW + HOUR, source: 'official', tokensLeft: null, tokensUsed: null, at: 0 },
+    sevenDay: { percentLeft: 90.5, resetsAt: null, source: 'official', tokensLeft: null, tokensUsed: null, at: 0 },
     costWeek: null, lifetimeTokens: null, tripTokens: 2150
   })
+})
+
+test('fromReadingFile: what readingFile wrote comes back; no stamp, a future stamp and junk do not', () => {
+  const limits = [
+    { kind: 'five_hour', percentUsed: 40, resetsAt: iso(NOW + HOUR), at: NOW - 5 },
+    { kind: 'seven_day', percentUsed: 26, at: NOW }
+  ]
+  const text = readingFile(tanks(limits, NOW), 0, { tokens: 0, turns: 0 }, NOW)
+  expect(fromReadingFile(text, NOW)).toEqual(limits)
+  // A millisecond earlier, the week's stamp is from the future.
+  expect(fromReadingFile(text, NOW - 1).map(l => l.kind)).toEqual(['five_hour'])
+  // 0.1.0 stamped no tank, and a session's starting figure is stamped 0.
+  const tank = (extra: object) => JSON.stringify({ v: 1, at: NOW, source: 'claude-code', sevenDay: { percentLeft: 88, ...extra } })
+  expect(fromReadingFile(tank({}), NOW)).toEqual([])
+  expect(fromReadingFile(tank({ at: 0 }), NOW)).toEqual([])
+  expect(fromReadingFile(tank({ at: 1 }), NOW)).toEqual([{ kind: 'seven_day', percentUsed: 12, at: 1 }])
+  for (const junk of [undefined, 7, '', 'nope', 'null', '[]', '{}', tank({ at: 1, resetsAt: 1e300 }),
+    tank({ at: 1, percentLeft: '88' }), JSON.stringify({ v: 1, source: 'the-app', sevenDay: { percentLeft: 88, at: 1 } })]) {
+    expect(fromReadingFile(junk, NOW)).toEqual([])
+  }
 })
 
 test('readingFile: no reading, a passed reset, and junk trip all come out null or 0', () => {
