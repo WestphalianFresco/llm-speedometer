@@ -613,13 +613,12 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             let state = app.state::<AppState>();
-            // the window: remembered size and place, always on top, every workspace
+            // the window: remembered size and place, always on top, on its own Space only
             if let Some(window) = main_window(&handle) {
                 let (size, saved) = state.core.lock().map(|c| (normal_size(&c.ui), (c.ui.x, c.ui.y))).unwrap_or((NORMAL_SIZE, (None, None)));
                 let (x, y) = place(&window, saved, size);
                 let _ = window.set_size(LogicalSize::new(size.0, size.1));
                 let _ = window.set_position(LogicalPosition::new(x, y));
-                let _ = window.set_visible_on_all_workspaces(true);
                 apply_resize_mode(&window, false);
                 let h = handle.clone();
                 window.on_window_event(move |event| match event {
