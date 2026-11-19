@@ -10,6 +10,17 @@ pub const MIN_SCALE: f64 = 0.6;
 pub const MAX_SCALE: f64 = 2.5;
 pub const ASPECT: f64 = NORMAL_SIZE.0 / NORMAL_SIZE.1;
 
+/// A window kept whole on its screen: shrunk in proportion if it is larger
+/// than the screen, then slid back inside. Logical pixels throughout;
+/// `screen` is (x, y, width, height). Returns (position, size).
+pub fn fit(pos: (f64, f64), size: (f64, f64), screen: (f64, f64, f64, f64)) -> ((f64, f64), (f64, f64)) {
+    let (sx, sy, sw, sh) = screen;
+    let k = (sw / size.0).min(sh / size.1).min(1.0);
+    let (w, h) = ((size.0 * k).round(), (size.1 * k).round());
+    // min before max: a screen smaller than the window still gets its top-left corner
+    ((pos.0.min(sx + sw - w).max(sx), pos.1.min(sy + sh - h).max(sy)), (w, h))
+}
+
 pub fn default_settings() -> Value {
     json!({
         "theme": "system",      // system | light | dark
@@ -150,6 +161,23 @@ mod tests {
         assert_eq!(coerce_width(Some(10.0)), Some(282.0));
         assert_eq!(coerce_width(Some(5000.0)), Some(1175.0));
         assert_eq!(coerce_width(Some(-1.0)), None);
+    }
+
+    #[test]
+    fn a_window_is_kept_whole_on_its_screen() {
+        let screen = (0.0, 38.0, 1512.0, 944.0);
+        // already inside: untouched
+        assert_eq!(fit((100.0, 100.0), (470.0, 432.0), screen), ((100.0, 100.0), (470.0, 432.0)));
+        // hanging off the bottom-right: slid back in, same size
+        assert_eq!(fit((1400.0, 900.0), (470.0, 432.0), screen), ((1042.0, 550.0), (470.0, 432.0)));
+        // above the menu bar and left of the screen: pushed to the corner
+        assert_eq!(fit((-50.0, 0.0), (470.0, 432.0), screen).0, (0.0, 38.0));
+        // full zoom is taller than the screen: shrunk in proportion to its height
+        let (pos, (w, h)) = fit((600.0, 300.0), (1175.0, 1080.0), screen);
+        assert_eq!((w, h), (1027.0, 944.0));
+        assert_eq!(pos, (485.0, 38.0));
+        // a second screen to the left has negative coordinates
+        assert_eq!(fit((-100.0, 500.0), (470.0, 432.0), (-1920.0, 0.0, 1920.0, 1080.0)).0, (-470.0, 500.0));
     }
 
     #[test]

@@ -289,26 +289,27 @@ fn normal_size(ui: &UiState) -> (f64, f64) {
     (w, (w / ASPECT).round())
 }
 
-/// Bottom-right of the primary screen, or the saved spot if it still fits a
-/// screen after a monitor change.
-fn place<R: Runtime>(window: &WebviewWindow<R>, saved: (Option<f64>, Option<f64>), size: (f64, f64)) -> (f64, f64) {
+/// The part of a screen a window may cover (no menu bar, dock or taskbar),
+/// in logical pixels: (x, y, width, height).
+fn work_area(monitor: &tauri::Monitor, scale: f64) -> (f64, f64, f64, f64) {
+    let area = monitor.work_area();
+    (area.position.x as f64 / scale, area.position.y as f64 / scale, area.size.width as f64 / scale, area.size.height as f64 / scale)
+}
+
+/// Where the window goes and how big it may be: the saved spot if it still
+/// touches a screen after a monitor change, else bottom-right of the primary
+/// screen. Either way the whole window ends up on that screen.
+fn place<R: Runtime>(window: &WebviewWindow<R>, saved: (Option<f64>, Option<f64>), size: (f64, f64)) -> ((f64, f64), (f64, f64)) {
     let scale = window.scale_factor().unwrap_or(1.0);
-    let screens: Vec<(f64, f64, f64, f64)> = window
-        .available_monitors()
-        .unwrap_or_default()
-        .iter()
-        .map(|m| (m.position().x as f64 / scale, m.position().y as f64 / scale, m.size().width as f64 / scale, m.size().height as f64 / scale))
-        .collect();
+    let screens: Vec<(f64, f64, f64, f64)> = window.available_monitors().unwrap_or_default().iter().map(|m| work_area(m, scale)).collect();
     if let (Some(x), Some(y)) = saved {
-        let fits = screens.iter().any(|(sx, sy, sw, sh)| x + size.0 > *sx && x < sx + sw && y + size.1 > *sy && y < sy + sh);
-        if fits {
-            return (x, y);
+        if let Some(screen) = screens.iter().find(|(sx, sy, sw, sh)| x + size.0 > *sx && x < sx + sw && y + size.1 > *sy && y < sy + sh) {
+            return ui::fit((x, y), size, *screen);
         }
     }
-    let primary = window.primary_monitor().ok().flatten().map(|m| (m.position().x as f64 / scale, m.position().y as f64 / scale, m.size().width as f64 / scale, m.size().height as f64 / scale));
-    let (sx, sy, sw, sh) = primary.unwrap_or((0.0, 0.0, 1440.0, 900.0));
-    // ponytail: no work-area query, so a margin stands in for the dock and taskbar
-    (sx + sw - size.0 - SCREEN_MARGIN, sy + sh - size.1 - SCREEN_MARGIN * 3.0)
+    let primary = window.primary_monitor().ok().flatten().map(|m| work_area(&m, scale)).unwrap_or((0.0, 0.0, 1440.0, 900.0));
+    let (sx, sy, sw, sh) = primary;
+    ui::fit((sx + sw - size.0 - SCREEN_MARGIN, sy + sh - size.1 - SCREEN_MARGIN), size, primary)
 }
 
 /// Resize rules for the state: expanded is resizable, aspect-locked and
@@ -345,7 +346,7 @@ fn apply_mini(app: &AppHandle, mini: bool) {
     let _ = window.set_resizable(true);
     let _ = window.set_min_size(None::<LogicalSize<f64>>);
     let _ = window.set_max_size(None::<LogicalSize<f64>>);
-    let (x, y) = place(&window, (pos.map(|p| p.0), pos.map(|p| p.1)), size);
+    let ((x, y), size) = place(&window, (pos.map(|p| p.0), pos.map(|p| p.1)), size);
     let _ = window.set_position(LogicalPosition::new(x, y));
     let _ = window.set_size(LogicalSize::new(size.0, size.1));
     apply_resize_mode(&window, mini);
@@ -616,7 +617,7 @@ pub fn run() {
             // the window: remembered size and place, always on top, on its own Space only
             if let Some(window) = main_window(&handle) {
                 let (size, saved) = state.core.lock().map(|c| (normal_size(&c.ui), (c.ui.x, c.ui.y))).unwrap_or((NORMAL_SIZE, (None, None)));
-                let (x, y) = place(&window, saved, size);
+                let ((x, y), size) = place(&window, saved, size);
                 let _ = window.set_size(LogicalSize::new(size.0, size.1));
                 let _ = window.set_position(LogicalPosition::new(x, y));
                 apply_resize_mode(&window, false);
@@ -640,7 +641,17 @@ pub fn run() {
                             return;
                         }
                         let width = (size.width as f64 / scale).clamp(NORMAL_SIZE.0 * MIN_SCALE, NORMAL_SIZE.0 * MAX_SCALE).round();
-                        let height = (width / ASPECT).round();
+                        let mut want = (width, (width / ASPECT).round());
+                        // zooming stops at the screen's edge: no larger than the screen, and slid back inside it
+                        if let (Ok(Some(monitor)), Ok(at)) = (w.current_monitor(), w.outer_position()) {
+                            let here = (at.x as f64 / scale, at.y as f64 / scale);
+                            let (spot, fitted) = ui::fit(here, want, work_area(&monitor, scale));
+                            want = fitted;
+                            if (spot.0 - here.0).abs() > 1.0 || (spot.1 - here.1).abs() > 1.0 {
+                                let _ = w.set_position(LogicalPosition::new(spot.0, spot.1));
+                            }
+                        }
+                        let (width, height) = want;
                         // the aspect is locked by answering any other shape with this one
                         if (size.height as f64 / scale - height).abs() > 2.0 || (size.width as f64 / scale - width).abs() > 2.0 {
                             let _ = w.set_size(LogicalSize::new(width, height));
