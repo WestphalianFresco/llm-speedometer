@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
+use crate::gearbox::model_family;
 use crate::local::{self, Event, FIVE_HOURS_MS, SEVEN_DAYS_MS};
 use crate::official::{Fetch, Reading};
 use crate::pricing::price_meta;
@@ -36,6 +37,16 @@ fn label_of(key: &str) -> &'static str {
         "sevenDay" => "This week",
         _ => "Week / model",
     }
+}
+
+/// The turns a per-model cap counts: those whose model family its scope names
+/// ("Fable", "Fable · Claude Code"). A scope that names no model matches
+/// nothing, and the cap then stands at its last official reading.
+fn scoped_events(events: &[Event], scope: Option<&str>) -> Vec<Event> {
+    let scope = scope.unwrap_or("").to_ascii_lowercase();
+    // ponytail: copies the matching turns on every read (one per 20 s tick);
+    // hand the tallies an iterator instead if a week of history gets heavy
+    events.iter().filter(|e| model_family(&e.model).is_some_and(|f| scope.contains(&f))).cloned().collect()
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -139,6 +150,11 @@ impl UsageStore {
     }
 
     fn learn(&mut self, key: &str, reading: &Reading, at: i64, events: &[Event], now: i64) {
+        // the cap moved to another model: the old model's rates do not carry over
+        if key == "weeklyScoped" && self.anchors.get(key).is_some_and(|a| a.scope != reading.scope) {
+            self.calibration.remove(key);
+            self.token_calibration.remove(key);
+        }
         let start = window_start(reading.resets_at, span_of(key), at);
         let tally = local::window_tally(events, start, at, now);
         let usable = reading.used_percent > 1.0 && reading.used_percent < 99.5;
@@ -164,11 +180,16 @@ impl UsageStore {
         if let Some(s) = &fetch.parsed.spend {
             self.official_spend = Some(json!({ "usedUsd": s.used_usd, "limitUsd": s.limit_usd, "currency": s.currency, "enabled": s.enabled, "percent": s.percent, "at": fetch.at }));
         }
-        let readings = [("fiveHour", &fetch.parsed.five_hour), ("sevenDay", &fetch.parsed.seven_day), ("weeklyScoped", &fetch.parsed.weekly_scoped)];
+        let readings = [("fiveHour", &fetch.parsed.five_hour), ("sevenDay", &fetch.parsed.seven_day)];
         for (key, reading) in readings {
             if let Some(r) = reading {
                 self.learn(key, r, fetch.at, events, now);
             }
+        }
+        match &fetch.parsed.weekly_scoped {
+            Some(r) => self.learn("weeklyScoped", r, fetch.at, &scoped_events(events, r.scope.as_deref()), now),
+            // answered without one: this plan has no per-model cap any more
+            None => drop(self.anchors.remove("weeklyScoped")),
         }
         self.save();
         true
@@ -291,10 +312,10 @@ impl UsageStore {
         };
         let five = self.resolve_window("fiveHour", events, now);
         let seven = self.resolve_window("sevenDay", events, now);
-        // The per-model cap only while an official reading stands: projecting
-        // it from every model's spend would invent a number that climbs while
-        // the real cap sits still.
-        let scoped = self.anchors.get("weeklyScoped").map(|a| (a.scope.clone(), self.resolve_window("weeklyScoped", events, now))).filter(|(_, r)| r.source == "official");
+        // The per-model cap is projected from that model's turns alone: every
+        // model's spend would invent a number that climbs while the real cap
+        // sits still.
+        let scoped = self.anchors.get("weeklyScoped").map(|a| (a.scope.clone(), self.resolve_window("weeklyScoped", &scoped_events(events, a.scope.as_deref()), now)));
         json!({
             "fiveHour": window_json("fiveHour", &five),
             "sevenDay": window_json("sevenDay", &seven),
@@ -410,6 +431,29 @@ mod tests {
         // an anchor older than 90 minutes is stale even if its window is live
         s.ingest_official(&ok(NOW - 2 * HOUR, Some((30.0, NOW + HOUR)), None), &events, NOW);
         assert_eq!(s.resolve_window("fiveHour", &events, NOW).source, "local");
+    }
+
+    #[test]
+    fn a_per_model_cap_moves_only_with_its_own_model() {
+        let mut s = UsageStore::new(None, None);
+        let fable = |ts: i64| Event { model: "claude-fable-5-2".into(), ..ev(ts, 1.0, 1000) };
+        let mut fetch = ok(NOW, None, Some((30.0, NOW + 24 * HOUR)));
+        fetch.parsed.weekly_scoped = Some(Reading { used_percent: 70.0, resets_at: Some(NOW + 24 * HOUR), severity: None, scope: Some("Fable".into()) });
+        // $7 of Fable and $1 of Opus before the reading: 10% a Fable dollar
+        let mut events: Vec<Event> = (1..=7).map(|h| fable(NOW - h * HOUR)).collect();
+        events.push(ev(NOW - 1000, 1.0, 1000));
+        s.ingest_official(&fetch, &events, NOW);
+        assert!((s.calibration["weeklyScoped"] - 10.0).abs() < 1e-9);
+        let cap = |s: &UsageStore, events: &[Event]| s.read(events, (0, false, None), NOW + 120_000, None)["weeklyScoped"]["percent"].as_f64();
+        // Opus spend after the reading leaves it where it was
+        events.push(ev(NOW + 60_000, 1.0, 1000));
+        assert_eq!(cap(&s, &events), Some(70.0));
+        // a Fable dollar moves it, and the projection stays on the page
+        events.push(fable(NOW + 90_000));
+        assert_eq!(cap(&s, &events), Some(80.0));
+        // an answer without a per-model cap takes it away
+        s.ingest_official(&ok(NOW + 120_000, None, Some((31.0, NOW + 24 * HOUR))), &events, NOW + 120_000);
+        assert!(s.read(&events, (0, false, None), NOW + 120_000, None)["weeklyScoped"].is_null());
     }
 
     #[test]
