@@ -24,6 +24,7 @@ pub fn fit(pos: (f64, f64), size: (f64, f64), screen: (f64, f64, f64, f64)) -> (
 pub fn default_settings() -> Value {
     json!({
         "theme": "system",      // system | light | dark
+        "face": "classic",      // the cluster layout; the page owns the list
         "opacity": 1,           // 0.55 .. 1
         "alwaysOnTop": true,
         "openAtLogin": false,
@@ -46,6 +47,9 @@ pub fn coerce_setting(key: &str, value: &Value) -> Option<Value> {
     let number = |v: &Value| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok())).filter(|n| n.is_finite());
     Some(match key {
         "theme" => json!(match value.as_str() { Some(t @ ("system" | "light" | "dark")) => t, _ => "system" }),
+        // Any short lowercase id: the page knows which faces exist and falls
+        // back to the classic one for a name it does not draw.
+        "face" => json!(value.as_str().filter(|f| !f.is_empty() && f.len() <= 24 && f.bytes().all(|b| b.is_ascii_lowercase())).unwrap_or("classic")),
         // 0 is a legitimate volume, and a bad opacity clamps to the floor
         "opacity" => json!(number(value).map(|n| n.clamp(0.55, 1.0)).unwrap_or(1.0)),
         "volume" => json!(number(value).map(|n| n.clamp(0.0, 1.0)).unwrap_or(0.0)),
@@ -152,6 +156,8 @@ mod tests {
     fn settings_are_coerced_and_unknown_keys_refused() {
         assert_eq!(coerce_setting("theme", &json!("dark")), Some(json!("dark")));
         assert_eq!(coerce_setting("theme", &json!("neon")), Some(json!("system")));
+        assert_eq!(coerce_setting("face", &json!("flight")), Some(json!("flight")));
+        assert_eq!(coerce_setting("face", &json!("<svg onload=x>")), Some(json!("classic")));
         assert_eq!(coerce_setting("opacity", &json!(0.1)), Some(json!(0.55)));
         assert_eq!(coerce_setting("opacity", &json!("nope")), Some(json!(1.0)));
         assert_eq!(coerce_setting("volume", &json!(0)), Some(json!(0.0)));
