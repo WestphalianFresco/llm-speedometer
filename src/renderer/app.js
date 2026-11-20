@@ -143,6 +143,9 @@ const DIALS = {
     needleLen: 40, needleTail: 7, needleW: [1.7, 0.7],
     readY: 92, readClass: 'read-lg',
     caption: 'TANK / WEEK', capY: 158,
+    // the per-model weekly cap: a second, finer arc between the disc and the
+    // numerals, and its figure in the mouth of the ring
+    innerR: 26, innerW: 2.5, subY: 146,
     lamp: { dx: 0, dy: 14 },
     wanderPct: 0.28,
     zones: [
@@ -202,6 +205,26 @@ function buildRing (dial) {
   const fill = svgEl('path', { class: 'ring-fill', 'stroke-width': dial.trackW })
   g.appendChild(fill)
 
+  // A second level on the same scale, hidden until there is one to show. Laid
+  // down here so the needle sweeps over it.
+  let inner = null
+  let innerFill = null
+  let sub = null
+  if (dial.innerR) {
+    inner = svgEl('g', {})
+    inner.style.display = 'none'
+    inner.appendChild(svgEl('path', {
+      d: arcPath(dial.cx, dial.cy, dial.innerR, dial.start, dial.start + dial.sweep),
+      class: 'ring-track',
+      'stroke-width': dial.innerW
+    }))
+    innerFill = svgEl('path', { class: 'ring-fill', 'stroke-width': dial.innerW })
+    inner.appendChild(innerFill)
+    g.appendChild(inner)
+    sub = svgEl('text', { x: dial.cx, y: dial.subY, class: 'dial-cap' })
+    g.appendChild(sub)
+  }
+
   // Same tick ring the tach carries, so the three gauges read as one set.
   for (let i = 0; i <= dial.tickCount; i++) {
     const major = i % dial.majorEvery === 0
@@ -257,7 +280,7 @@ function buildRing (dial) {
     g.appendChild(lamp)
   }
 
-  return { g: g, needle: needle, readout: readout, lamp: lamp, fill: fill }
+  return { g: g, needle: needle, readout: readout, lamp: lamp, fill: fill, inner: inner, innerFill: innerFill, sub: sub }
 }
 
 function buildTach (dial) {
@@ -321,16 +344,16 @@ function buildCluster () {
   }
 }
 
-/** Set a ring gauge's lit arc length and colour. */
-function paintRing (key, value) {
+/** Set a ring gauge's lit arc length and colour; `inner` picks its second arc. */
+function paintRing (key, value, inner) {
   const dial = DIALS[key]
-  const node = cluster[key].fill
+  const node = inner ? cluster[key].innerFill : cluster[key].fill
   if (!node) return
   if (value === null || value <= 0) {
     node.setAttribute('d', '')
     return
   }
-  node.setAttribute('d', arcPath(dial.cx, dial.cy, dial.trackR, dial.start, angleFor(dial, value)))
+  node.setAttribute('d', arcPath(dial.cx, dial.cy, inner ? dial.innerR : dial.trackR, dial.start, angleFor(dial, value)))
   node.setAttribute('stroke', zoneColor(dial, value))
 }
 
@@ -758,6 +781,21 @@ function renderTank (key, window) {
   return remaining
 }
 
+/**
+ * The per-model weekly cap (Fable's, say), which can run dry while the
+ * all-model week still looks open. Drawn only while the endpoint reports one,
+ * under the name the endpoint gives it.
+ */
+function renderModelCap (cap) {
+  const has = Boolean(cap && cap.percent !== null)
+  const left = has ? 100 - cap.percent : null
+  cluster.tankWeek.inner.style.display = has ? '' : 'none'
+  paintRing('tankWeek', left, true)
+  cluster.tankWeek.sub.textContent = has
+    ? (cap.scope || 'model').split(' · ')[0].toUpperCase() + ' ' + left.toFixed(0) + '%'
+    : ''
+}
+
 function render (data) {
   latest = data
 
@@ -774,6 +812,7 @@ function render (data) {
 
   renderTank('tank5h', data.fiveHour)
   renderTank('tankWeek', data.sevenDay)
+  renderModelCap(data.weeklyScoped)
 
   renderMood(data)
 
@@ -1461,6 +1500,9 @@ function buildTooltip (data) {
   lines.push('Weekly resets         ' + (data.sevenDay.resetsAt
     ? new Date(data.sevenDay.resetsAt).toLocaleString()
     : 'unknown until the next official poll'))
+  if (data.weeklyScoped && data.weeklyScoped.resetsAt) {
+    lines.push('Model cap resets      ' + new Date(data.weeklyScoped.resetsAt).toLocaleString())
+  }
   lines.push(data.fiveHour.anchorAt
     ? 'Official anchor       ' + Math.round((Date.now() - data.fiveHour.anchorAt) / 60000) + ' min ago'
     : 'Official anchor       none yet')
