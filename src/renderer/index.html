@@ -45,8 +45,10 @@
     <symbol id="i-close" viewBox="0 0 24 24">
       <path d="M6 6 L18 18 M18 6 L6 18"/>
     </symbol>
+    <!-- the pill's counterpart: the same outline at the dashboard's height,
+         so each button shows the shape the window is about to take -->
     <symbol id="i-expand" viewBox="0 0 24 24">
-      <path d="M14 4 H20 V10 M20 4 L13.5 10.5 M10 20 H4 V14 M4 20 L10.5 13.5"/>
+      <rect x="4" y="5" width="16" height="14" rx="3"/>
     </symbol>
     <symbol id="i-help" viewBox="0 0 24 24">
       <path d="M9.2 9.2 A2.9 2.9 0 1 1 13.3 11.8 C12.5 12.3 12 12.9 12 13.8 V14.4 M12 18.2 V18.3"/>
@@ -146,6 +148,10 @@
               <button class="seg-btn" data-theme="light">Light</button>
               <button class="seg-btn" data-theme="dark">Dark</button>
             </div>
+          </div>
+          <div class="set-row">
+            <span class="set-label">Dashboard</span>
+            <select class="set-select" id="set-face"></select>
           </div>
           <div class="set-row">
             <span class="set-label">Opacity</span>
@@ -442,6 +448,7 @@
     </div>
   </div>
 
+  <script src="tauri-shim.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
