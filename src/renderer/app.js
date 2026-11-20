@@ -88,9 +88,9 @@ const arcPath = (cx, cy, r, a1, a2) => {
  *            needle, so the level is readable both as a swept angle and as a
  *            length of lit track.
  */
-const DIALS = {
+const CLASSIC_DIALS = {
   tank5h: {
-    kind: 'ring',
+    kind: 'ring', source: 'fiveHour',
     cx: 68, cy: 88, r: 54, max: 100,
     start: 120, sweep: 300,
     trackR: 52, trackW: 4,
@@ -112,7 +112,7 @@ const DIALS = {
     ]
   },
   tach: {
-    kind: 'tach',
+    kind: 'tach', source: 'rate',
     cx: 211, cy: 76, r: 68, max: 20000,
     start: 135, sweep: 270,
     tickCount: 40, majorEvery: 5,
@@ -132,7 +132,7 @@ const DIALS = {
     ]
   },
   tankWeek: {
-    kind: 'ring',
+    kind: 'ring', source: 'sevenDay',
     cx: 354, cy: 88, r: 54, max: 100,
     start: 120, sweep: 300,
     trackR: 52, trackW: 4,
@@ -143,6 +143,9 @@ const DIALS = {
     needleLen: 40, needleTail: 7, needleW: [1.7, 0.7],
     readY: 92, readClass: 'read-lg',
     caption: 'TANK / WEEK', capY: 158,
+    // the per-model weekly cap: a second, finer arc between the disc and the
+    // numerals, and its figure in the mouth of the ring
+    innerR: 26, innerW: 2.5, subY: 146,
     lamp: { dx: 0, dy: 14 },
     wanderPct: 0.28,
     zones: [
@@ -153,7 +156,168 @@ const DIALS = {
   }
 }
 
-const DIAL_KEYS = ['tank5h', 'tach', 'tankWeek']
+/**
+ * Faces: whole layouts for the cluster, swapped the way a watch swaps its
+ * face. Each is a set of dials. `tach` is always the output rate, because the
+ * rev and the ignition sweep drive it by name; every dial names the reading
+ * it shows in `source`: 'rate', 'fiveHour', 'sevenDay' or 'modelCap' (the
+ * per-model weekly cap). All faces share the classic one's 422 x 172 box, so
+ * nothing below the cluster moves when the face changes.
+ */
+const TANK_ZONES = CLASSIC_DIALS.tank5h.zones
+const RATE_ZONES = CLASSIC_DIALS.tach.zones
+
+/** A ring tank at any size, scaled from the classic one (drawn at r = 54). */
+const ringAt = (cx, cy, r, extra) => {
+  // on a plate the scale sits inside the bezel rather than on the rim
+  const k = (extra.plate ? r - 6 : r) / 54
+  const dial = {
+    kind: 'ring', cx, cy, r, max: 100, start: 120, sweep: 300,
+    trackR: 52 * k, trackW: 4 * k,
+    tickCount: 20, majorEvery: 5,
+    tickOuter: 46 * k, tickInner: 41 * k, majorOuter: 47 * k, majorInner: 40 * k,
+    numeralR: 34 * k, numerals: [0, 25, 50, 75, 100], numeralClass: 'sm',
+    discR: 22 * k,
+    needleLen: 40 * k, needleTail: 7 * k, needleW: [1.7, 0.7],
+    readY: cy + 4, readClass: k < 0.85 ? 'read-md' : 'read-lg',
+    capY: cy + r + 16,
+    lamp: { dx: 0, dy: 14 * k },
+    wanderPct: 0.3,
+    zones: TANK_ZONES
+  }
+  // the model cap as a second arc, where the classic week dial carries it
+  if (extra.inner) Object.assign(dial, { innerR: 26 * k, innerW: 2.5 * k, subY: cy + r + 4 })
+  return Object.assign(dial, extra)
+}
+
+/** The tach at any size, scaled from the classic one (drawn at r = 68). */
+const tachAt = (cx, cy, r, extra) => {
+  const k = (extra.plate ? r - 5 : r) / 68
+  return Object.assign({
+    kind: 'tach', source: 'rate', cx, cy, r, max: 20000, start: 135, sweep: 270,
+    tickCount: 40, majorEvery: 5,
+    tickOuter: 65 * k, tickInner: 58 * k, majorOuter: 66 * k, majorInner: 54 * k,
+    numeralR: 44 * k, numerals: [0, 5000, 10000, 15000, 20000],
+    discR: 37 * k,
+    needleLen: 50 * k, needleTail: 9 * k,
+    readY: cy + 3, readClass: 'read-xl',
+    unit: 'TOK / MIN', unitY: cy + 16,
+    caption: 'OUTPUT RATE', capY: cy + r + 14,
+    wanderPct: 1.6,
+    zones: RATE_ZONES
+  }, extra)
+}
+
+/** A tank as a straight bar: x, y is its empty end and `w` its length. */
+const barAt = (x, y, w, extra) =>
+  Object.assign({ kind: 'bar', x, y, w, h: 6, max: 100, wanderPct: 0, zones: TANK_ZONES }, extra)
+
+const FACES = {
+  classic: { name: 'Classic', dials: CLASSIC_DIALS },
+
+  // Four of a kind in a row: the rate, then the three tanks.
+  quad: {
+    name: 'Four dials',
+    dials: {
+      tach: tachAt(55, 78, 48, {
+        numeralClass: 'sm', readClass: 'read-lg', unit: 'TOK/MIN', unitY: 91, capY: 142
+      }),
+      tank5h: ringAt(159, 78, 48, { source: 'fiveHour', caption: 'TANK / 5H' }),
+      tankWeek: ringAt(263, 78, 48, { source: 'sevenDay', caption: 'TANK / WEEK' }),
+      tankModel: ringAt(367, 78, 48, { source: 'modelCap', caption: 'TANK / MODEL' })
+    }
+  },
+
+  // One big yellow tach with a red needle, the tanks small beside it.
+  supercar: {
+    name: 'Supercar',
+    dials: {
+      tank5h: ringAt(58, 106, 42, { source: 'fiveHour', caption: 'TANK / 5H' }),
+      tach: tachAt(211, 80, 72, { plate: true, skin: 'yellow', plainTicks: true, bands: 2, capY: 164 }),
+      tankWeek: ringAt(364, 106, 42, { source: 'sevenDay', caption: 'TANK / WEEK', inner: true })
+    }
+  },
+
+  // Two large dials with a screen between them.
+  cockpit: {
+    name: 'Glass cockpit',
+    decor: svg => svg.appendChild(svgEl('rect', {
+      x: 150, y: 26, width: 122, height: 112, rx: 10, class: 'face-panel'
+    })),
+    dials: {
+      tach: tachAt(74, 78, 64, { capY: 158 }),
+      tank5h: barAt(164, 70, 94, { source: 'fiveHour', caption: '5H', onFace: true }),
+      tankModel: barAt(164, 112, 94, { source: 'modelCap', caption: 'MODEL', onFace: true }),
+      tankWeek: ringAt(348, 78, 64, {
+        source: 'sevenDay', caption: 'TANK / WEEK', readClass: 'read-xl', readY: 84
+      })
+    }
+  },
+
+  // A single digital sweep in the middle, the tanks as lit bars.
+  tourer: {
+    name: 'Grand tourer',
+    dials: {
+      tank5h: barAt(16, 88, 96, { source: 'fiveHour', caption: '5H', segments: 12 }),
+      tach: tachAt(211, 80, 70, { kind: 'sweep', capY: 142, wanderPct: 0.5 }),
+      tankWeek: barAt(310, 68, 96, { source: 'sevenDay', caption: 'WEEK', segments: 12 }),
+      tankModel: barAt(310, 110, 96, { source: 'modelCap', caption: 'MODEL', segments: 12 })
+    }
+  },
+
+  // An instrument panel: two engine tapes, round gauges with bezels.
+  flight: {
+    name: 'Flight deck',
+    decor: svg => {
+      svg.appendChild(svgEl('rect', { x: 2, y: 2, width: 418, height: 168, rx: 12, class: 'face-panel' }))
+      for (const [x, y] of [[13, 13], [409, 13], [13, 159], [409, 159]]) {
+        svg.appendChild(svgEl('circle', { cx: x, cy: y, r: 2.4, class: 'face-screw' }))
+      }
+    },
+    dials: {
+      tank5h: barAt(34, 118, 96, { vertical: true, h: 12, source: 'fiveHour', caption: '5H' }),
+      tankWeek: barAt(78, 118, 96, { vertical: true, h: 12, source: 'sevenDay', caption: 'WEEK' }),
+      tach: tachAt(194, 76, 60, { plate: true, skin: 'aero', plainTicks: true, bands: 4, capY: 152 }),
+      tankModel: ringAt(340, 78, 50, { source: 'modelCap', caption: 'TANK / MODEL', plate: true, skin: 'aero', capY: 146 })
+    }
+  },
+
+  // Brass and cream, and one gauge with two hands, as in a driver's cab.
+  loco: {
+    name: 'Locomotive',
+    dials: {
+      tank5h: ringAt(64, 80, 50, {
+        source: 'fiveHour', caption: 'TANK / 5H', plate: true, skin: 'brass', plainTicks: true, lamp: null, capY: 148
+      }),
+      // the same dial's second hand; listed after it so it is drawn on top
+      tankWeek: {
+        kind: 'hand', source: 'sevenDay', cx: 64, cy: 80, max: 100, start: 120, sweep: 300,
+        needleLen: 33, needleTail: -18.5, needleW: [1.7, 0.7],
+        readY: 120, caption: 'RED HAND / WEEK', capY: 159,
+        wanderPct: 0.28, zones: TANK_ZONES
+      },
+      tach: tachAt(211, 80, 70, { plate: true, skin: 'brass', plainTicks: true, bands: 2 }),
+      tankModel: ringAt(358, 80, 50, {
+        source: 'modelCap', caption: 'TANK / MODEL', plate: true, skin: 'brass', plainTicks: true, capY: 148
+      })
+    }
+  }
+}
+
+// The one runnable check on the table above: every face must carry the rate
+// dial by name and show only readings the page has.
+for (const id in FACES) {
+  const dials = FACES[id].dials
+  console.assert(dials.tach && dials.tach.source === 'rate', 'face ' + id + ': no rate dial named tach')
+  for (const key in dials) {
+    console.assert(['rate', 'fiveHour', 'sevenDay', 'modelCap'].includes(dials[key].source),
+      'face ' + id + ': dial ' + key + ' shows an unknown reading')
+  }
+}
+
+let faceId = 'classic'
+let DIALS = FACES[faceId].dials
+let DIAL_KEYS = Object.keys(DIALS)
 
 const angleFor = (dial, value) =>
   dial.start + (Math.min(dial.max, Math.max(0, value)) / dial.max) * dial.sweep
@@ -189,8 +353,33 @@ function buildNeedle (dial) {
   return needle
 }
 
-function buildRing (dial) {
+/**
+ * A dial's group. `plate` lays a filled face under everything and `skin`
+ * names a palette the stylesheet applies to this one dial.
+ */
+function dialGroup (dial) {
   const g = svgEl('g', {})
+  if (dial.skin) g.dataset.skin = dial.skin
+  if (dial.plate) g.appendChild(svgEl('circle', { cx: dial.cx, cy: dial.cy, r: dial.r, class: 'dial-plate' }))
+  return g
+}
+
+/** The last `dial.bands` zones as coloured arcs on the rim: a redline. */
+function addBands (g, dial) {
+  let from = 0
+  dial.zones.forEach((zone, i) => {
+    if (i >= dial.zones.length - (dial.bands || 0)) {
+      g.appendChild(svgEl('path', {
+        d: arcPath(dial.cx, dial.cy, dial.majorOuter + 3.5, angleFor(dial, from), angleFor(dial, zone.to)),
+        class: 'dial-band', stroke: zone.color, 'stroke-width': 3
+      }))
+    }
+    from = zone.to
+  })
+}
+
+function buildRing (dial) {
+  const g = dialGroup(dial)
 
   g.appendChild(svgEl('path', {
     d: arcPath(dial.cx, dial.cy, dial.trackR, dial.start, dial.start + dial.sweep),
@@ -201,6 +390,26 @@ function buildRing (dial) {
   // the lit portion; length and colour are set on every render
   const fill = svgEl('path', { class: 'ring-fill', 'stroke-width': dial.trackW })
   g.appendChild(fill)
+
+  // A second level on the same scale, hidden until there is one to show. Laid
+  // down here so the needle sweeps over it.
+  let inner = null
+  let innerFill = null
+  let sub = null
+  if (dial.innerR) {
+    inner = svgEl('g', {})
+    inner.style.display = 'none'
+    inner.appendChild(svgEl('path', {
+      d: arcPath(dial.cx, dial.cy, dial.innerR, dial.start, dial.start + dial.sweep),
+      class: 'ring-track',
+      'stroke-width': dial.innerW
+    }))
+    innerFill = svgEl('path', { class: 'ring-fill', 'stroke-width': dial.innerW })
+    inner.appendChild(innerFill)
+    g.appendChild(inner)
+    sub = svgEl('text', { x: dial.cx, y: dial.subY, class: 'dial-cap' })
+    g.appendChild(sub)
+  }
 
   // Same tick ring the tach carries, so the three gauges read as one set.
   for (let i = 0; i <= dial.tickCount; i++) {
@@ -215,7 +424,7 @@ function buildRing (dial) {
       class: 'dial-tick' + (major ? ' major' : ''),
       'stroke-width': major ? 2 : 1
     })
-    if (major) line.setAttribute('stroke', zoneColor(dial, value))
+    if (major && !dial.plainTicks) line.setAttribute('stroke', zoneColor(dial, value))
     g.appendChild(line)
   }
 
@@ -257,11 +466,12 @@ function buildRing (dial) {
     g.appendChild(lamp)
   }
 
-  return { g: g, needle: needle, readout: readout, lamp: lamp, fill: fill }
+  return { g: g, needle: needle, readout: readout, lamp: lamp, fill: fill, inner: inner, innerFill: innerFill, sub: sub, cap: caption }
 }
 
 function buildTach (dial) {
-  const g = svgEl('g', {})
+  const g = dialGroup(dial)
+  addBands(g, dial)
 
   for (let i = 0; i <= dial.tickCount; i++) {
     const major = i % dial.majorEvery === 0
@@ -275,13 +485,16 @@ function buildTach (dial) {
       class: 'dial-tick' + (major ? ' major' : ''),
       'stroke-width': major ? 2.4 : 1.1
     })
-    if (major) line.setAttribute('stroke', zoneColor(dial, value))
+    if (major && !dial.plainTicks) line.setAttribute('stroke', zoneColor(dial, value))
     g.appendChild(line)
   }
 
   for (const value of dial.numerals) {
     const p = polar(dial.cx, dial.cy, dial.numeralR, angleFor(dial, value))
-    const t = svgEl('text', { x: p.x.toFixed(1), y: (p.y + 3.4).toFixed(1), class: 'dial-num' })
+    const t = svgEl('text', {
+      x: p.x.toFixed(1), y: (p.y + 3.4).toFixed(1),
+      class: 'dial-num' + (dial.numeralClass ? ' ' + dial.numeralClass : '')
+    })
     t.textContent = String(Math.round(value / 1000))
     g.appendChild(t)
   }
@@ -306,10 +519,150 @@ function buildTach (dial) {
   caption.textContent = dial.caption
   g.appendChild(caption)
 
-  return { g: g, needle: needle, readout: readout, lamp: null, fill: null }
+  return { g: g, needle: needle, readout: readout, lamp: null, fill: null, cap: caption }
 }
 
-const buildDial = dial => (dial.kind === 'ring' ? buildRing(dial) : buildTach(dial))
+/**
+ * A tank as a straight bar, lying down or (`vertical`) standing. Track and
+ * level are two strokes of one line, so `segments` cuts both into the same
+ * lit blocks. It has no needle: `apply` moves the level's far end instead.
+ */
+function buildBar (dial) {
+  const g = dialGroup(dial)
+  g.classList.add('bar')
+  if (dial.onFace) g.classList.add('on-face')
+  const far = t => (dial.vertical ? dial.y - dial.w * t : dial.x + dial.w * t).toFixed(2)
+  const gap = 2
+  const stroke = cls => {
+    const line = svgEl('line', {
+      x1: dial.x, y1: dial.y,
+      x2: dial.vertical ? dial.x : far(1), y2: dial.vertical ? far(1) : dial.y,
+      class: cls, 'stroke-width': dial.h
+    })
+    if (dial.segments) {
+      line.setAttribute('stroke-dasharray',
+        ((dial.w - gap * (dial.segments - 1)) / dial.segments).toFixed(2) + ' ' + gap)
+    } else {
+      line.setAttribute('stroke-linecap', 'round')
+    }
+    g.appendChild(line)
+    return line
+  }
+  stroke('bar-track')
+  const level = stroke('bar-fill')
+
+  if (dial.vertical) {
+    // a tape's scale: quarter marks down its right-hand side
+    for (const value of [0, 25, 50, 75, 100]) {
+      const x = dial.x + dial.h / 2 + 4
+      g.appendChild(svgEl('line', {
+        x1: x, y1: far(value / 100), x2: x + (value % 50 === 0 ? 6 : 4), y2: far(value / 100),
+        class: 'dial-tick major', 'stroke-width': 1
+      }))
+    }
+  }
+
+  const caption = svgEl('text', dial.vertical
+    ? { x: dial.x, y: dial.y + 16, class: 'dial-cap' }
+    : { x: dial.x, y: dial.y - 10, class: 'dial-cap bar-cap' })
+  caption.textContent = dial.caption
+  g.appendChild(caption)
+
+  const readout = svgEl('text', dial.vertical
+    ? { x: dial.x, y: dial.y + 32, class: 'bar-read mid' }
+    : { x: dial.x + dial.w, y: dial.y - 9, class: 'bar-read' })
+  readout.textContent = '--'
+  g.appendChild(readout)
+
+  const apply = value => {
+    const t = Math.min(1, Math.max(0, value / dial.max))
+    level.setAttribute(dial.vertical ? 'y2' : 'x2', far(t))
+    // a round-capped line of no length still draws its caps
+    level.style.visibility = t > 0.004 ? '' : 'hidden'
+  }
+  const paint = value => {
+    if (value !== null) level.setAttribute('stroke', zoneColor(dial, value))
+  }
+  apply(0)
+  return { g: g, apply: apply, paint: paint, readout: readout, lamp: null, fill: null, cap: caption }
+}
+
+/**
+ * The tach as a lit band with no needle, the way a digital cluster draws it:
+ * the band's length is the reading and its colour the zone it has reached.
+ */
+function buildSweep (dial) {
+  const g = dialGroup(dial)
+  const r = dial.r - 5
+  g.appendChild(svgEl('path', {
+    d: arcPath(dial.cx, dial.cy, r, dial.start, dial.start + dial.sweep),
+    class: 'ring-track', 'stroke-width': 8
+  }))
+  const band = svgEl('path', { class: 'ring-fill', 'stroke-width': 8 })
+  g.appendChild(band)
+
+  for (const value of dial.numerals) {
+    const a = angleFor(dial, value)
+    const outer = polar(dial.cx, dial.cy, r - 7, a)
+    const inner = polar(dial.cx, dial.cy, r - 12, a)
+    g.appendChild(svgEl('line', {
+      x1: outer.x.toFixed(2), y1: outer.y.toFixed(2),
+      x2: inner.x.toFixed(2), y2: inner.y.toFixed(2),
+      class: 'dial-tick major', 'stroke-width': 2
+    }))
+    const p = polar(dial.cx, dial.cy, r - 21, a)
+    const t = svgEl('text', { x: p.x.toFixed(1), y: (p.y + 3.4).toFixed(1), class: 'dial-num' })
+    t.textContent = String(Math.round(value / 1000))
+    g.appendChild(t)
+  }
+
+  const readout = svgEl('text', { x: dial.cx, y: dial.readY, class: 'dial-read on-card ' + dial.readClass })
+  readout.textContent = '--'
+  g.appendChild(readout)
+
+  const unit = svgEl('text', { x: dial.cx, y: dial.unitY, class: 'dial-unit on-card' })
+  unit.textContent = dial.unit
+  g.appendChild(unit)
+
+  const caption = svgEl('text', { x: dial.cx, y: dial.capY, class: 'dial-cap' })
+  caption.textContent = dial.caption
+  g.appendChild(caption)
+
+  const apply = value => {
+    if (value <= 0) {
+      band.setAttribute('d', '')
+      return
+    }
+    band.setAttribute('d', arcPath(dial.cx, dial.cy, r, dial.start, angleFor(dial, value)))
+    band.setAttribute('stroke', zoneColor(dial, value))
+  }
+  return { g: g, apply: apply, readout: readout, lamp: null, fill: null, cap: caption }
+}
+
+/**
+ * A second hand on a dial another entry has already drawn: only the needle,
+ * its figure and its caption. It starts outside the first dial's disc, since
+ * it is drawn over that disc rather than under it.
+ */
+function buildHand (dial) {
+  const g = svgEl('g', {})
+  const needle = buildNeedle(dial)
+  needle.firstChild.setAttribute('fill', 'var(--hand)')
+  g.appendChild(needle)
+
+  const readout = svgEl('text', { x: dial.cx, y: dial.readY, class: 'dial-cap hand-read' })
+  readout.textContent = '--'
+  g.appendChild(readout)
+
+  const caption = svgEl('text', { x: dial.cx, y: dial.capY, class: 'dial-cap hand-read' })
+  caption.textContent = dial.caption
+  g.appendChild(caption)
+
+  return { g: g, needle: needle, readout: readout, lamp: null, fill: null, cap: caption }
+}
+
+const BUILDERS = { ring: buildRing, tach: buildTach, bar: buildBar, sweep: buildSweep, hand: buildHand }
+const buildDial = dial => BUILDERS[dial.kind](dial)
 
 const cluster = {}
 
@@ -321,16 +674,42 @@ function buildCluster () {
   }
 }
 
-/** Set a ring gauge's lit arc length and colour. */
-function paintRing (key, value) {
+/**
+ * Swap the whole cluster for another face. The old dials and their needle
+ * states are thrown away and the new set is built in their place; the caller
+ * renders into it straight after, so nothing is drawn empty.
+ */
+function useFace (id) {
+  if (!FACES[id]) id = 'classic'
+  if (id === faceId) return
+  faceId = id
+  DIALS = FACES[id].dials
+  DIAL_KEYS = Object.keys(DIALS)
+  nodes.cluster.replaceChildren()
+  nodes.cluster.dataset.face = id
+  if (FACES[id].decor) FACES[id].decor(nodes.cluster)
+  for (const key of Object.keys(cluster)) delete cluster[key]
+  for (const key of Object.keys(dialState)) delete dialState[key]
+  buildCluster()
+  for (const key of DIAL_KEYS) dialState[key] = makeDialState(DIALS[key])
+}
+
+/** Light a gauge's level: a ring's arc, or whatever the gauge paints itself. */
+function paintLevel (key, value) {
+  paintRing(key, value)
+  if (cluster[key].paint) cluster[key].paint(value)
+}
+
+/** Set a ring gauge's lit arc length and colour; `inner` picks its second arc. */
+function paintRing (key, value, inner) {
   const dial = DIALS[key]
-  const node = cluster[key].fill
+  const node = inner ? cluster[key].innerFill : cluster[key].fill
   if (!node) return
   if (value === null || value <= 0) {
     node.setAttribute('d', '')
     return
   }
-  node.setAttribute('d', arcPath(dial.cx, dial.cy, dial.trackR, dial.start, angleFor(dial, value)))
+  node.setAttribute('d', arcPath(dial.cx, dial.cy, inner ? dial.innerR : dial.trackR, dial.start, angleFor(dial, value)))
   node.setAttribute('stroke', zoneColor(dial, value))
 }
 
@@ -392,7 +771,9 @@ function setNeedleIdle (key, idle) {
 }
 
 function applyNeedle (key, value) {
-  cluster[key].needle.style.transform = `rotate(${angleFor(DIALS[key], value).toFixed(3)}deg)`
+  const gauge = cluster[key]
+  if (gauge.apply) gauge.apply(value)
+  else gauge.needle.style.transform = `rotate(${angleFor(DIALS[key], value).toFixed(3)}deg)`
 }
 
 let lastFrame = 0
@@ -427,7 +808,7 @@ function frame (now) {
       shown += (wander + s.drift * 4) * s.amplitude
     }
 
-    if (paint && cluster[key] && cluster[key].needle) {
+    if (paint && cluster[key]) {
       const value = Math.min(DIALS[key].max, Math.max(0, shown))
       applyNeedle(key, value)
       // during a blip the digits follow the needle, so the two never disagree
@@ -744,7 +1125,7 @@ function renderTank (key, window) {
   const remaining = usedPercent === null ? null : 100 - usedPercent
   setNeedle(key, remaining === null ? 0 : remaining)
   setNeedleIdle(key, remaining === null)
-  paintRing(key, remaining)
+  paintLevel(key, remaining)
 
   const unsupported = Boolean(window && window.source === 'unsupported')
   cluster[key].readout.textContent = remaining === null
@@ -758,8 +1139,29 @@ function renderTank (key, window) {
   return remaining
 }
 
+/**
+ * The per-model weekly cap (Fable's, say), which can run dry while the
+ * all-model week still looks open. Drawn only while the endpoint reports one,
+ * under the name the endpoint gives it.
+ */
+function renderModelCap (cap) {
+  const has = Boolean(cap && cap.percent !== null)
+  const left = has ? 100 - cap.percent : null
+  const name = ((cap && cap.scope) || 'model').split(' · ')[0].toUpperCase()
+  for (const key of DIAL_KEYS) {
+    const gauge = cluster[key]
+    // a face that gives the cap a gauge of its own names it after the model
+    if (DIALS[key].source === 'modelCap') gauge.cap.textContent = (DIALS[key].kind === 'bar' ? '' : 'TANK / ') + name
+    if (!gauge.inner) continue
+    gauge.inner.style.display = has ? '' : 'none'
+    paintRing(key, left, true)
+    gauge.sub.textContent = has ? name + ' ' + left.toFixed(0) + '%' : ''
+  }
+}
+
 function render (data) {
   latest = data
+  useFace(data.settings && data.settings.face)
 
   // speedometer — live consumption, always available from local transcripts
   // A blip owns the tach until it finishes; a poll landing mid-rev must not
@@ -772,8 +1174,11 @@ function render (data) {
     cluster.tach.readout.textContent = formatRate(rate)
   }
 
-  renderTank('tank5h', data.fiveHour)
-  renderTank('tankWeek', data.sevenDay)
+  for (const key of DIAL_KEYS) {
+    const source = DIALS[key].source
+    if (source !== 'rate') renderTank(key, source === 'modelCap' ? data.weeklyScoped : data[source])
+  }
+  renderModelCap(data.weeklyScoped)
 
   renderMood(data)
 
@@ -1321,6 +1726,30 @@ function renderWeekMeta (data) {
  */
 function renderCost (data) {
   const cost = data.cost
+  // A local model bills nothing, so its row says what it does have: how fast
+  // the last answer came, and what the same tokens list for at a hosted model.
+  if (cost && cost.saved) {
+    const tps = data.tokensPerSecond
+    const saved = cost.saved
+    nodes.costRow.classList.remove('empty')
+    nodes.costLabel.textContent = 'LOCAL'
+    nodes.costWeek.hidden = !tps
+    nodes.costWeek.textContent = tps ? Math.round(tps) + ' tok/s' : ''
+    nodes.costSep.hidden = !tps
+    nodes.costBilled.hidden = false
+    nodes.costBilled.textContent = money(saved.sevenDay || 0) + ' saved'
+    nodes.costRow.title = [
+      'LOCAL',
+      '  last answer  ' + (tps ? tps.toFixed(1) + ' tokens per second' : 'not measured yet'),
+      '  this week    ' + money(saved.sevenDay || 0) + ' at ' + saved.against + ' list price',
+      '  lifetime     ' + money(saved.lifetime || 0),
+      '',
+      'Nothing is billed for a model running on this machine. The dollars are',
+      'what the same token counts would list for at ' + saved.against + ', as a scale',
+      'for the work; tokenizers differ, so read them as an estimate.'
+    ].join(String.fromCharCode(10))
+    return
+  }
   const spend = cost && cost.official
   const billed = spend && spend.enabled !== false && spend.usedUsd > 0 ? spend.usedUsd : 0
   const onPlan = Boolean(cost && cost.plan)
@@ -1437,6 +1866,9 @@ function buildTooltip (data) {
   lines.push('Weekly resets         ' + (data.sevenDay.resetsAt
     ? new Date(data.sevenDay.resetsAt).toLocaleString()
     : 'unknown until the next official poll'))
+  if (data.weeklyScoped && data.weeklyScoped.resetsAt) {
+    lines.push('Model cap resets      ' + new Date(data.weeklyScoped.resetsAt).toLocaleString())
+  }
   lines.push(data.fiveHour.anchorAt
     ? 'Official anchor       ' + Math.round((Date.now() - data.fiveHour.anchorAt) / 60000) + ' min ago'
     : 'Official anchor       none yet')
@@ -2258,11 +2690,29 @@ function selectMake (id) {
 function renderGearbox (data) {
   if (!data.catalog) return
   const first = gbCatalog.length === 0
+  // The catalogue is what was found on this machine, and it changes while the
+  // app runs (a model is pulled, a CLI signs in), so the plate is redrawn when
+  // its gears differ rather than once at start.
+  const plate = () => JSON.stringify((gbProvider() || {}).gears || [])
+  const before = first ? null : plate()
+  const was = gbState
   gbCatalog = data.catalog
   gbState = data.gearbox || gbState
-  if (first || !gbProviderId) gbProviderId = gbState.providerId || gbCatalog[0].id
+  // The gate follows the shifter when the reading moves it to another make (a
+  // different provider was unlocked), and never points at a make that is not
+  // on this machine. Browsing the other makes by hand is left alone.
+  const known = id => gbCatalog.some(p => p.id === id)
+  if (first || !known(gbProviderId) || gbState.providerId !== was.providerId) {
+    gbProviderId = known(gbState.providerId) ? gbState.providerId : gbCatalog[0].id
+  }
 
-  if (first) buildGate()
+  if (first || plate() !== before) {
+    buildGate()
+  } else if (gbState.gear !== was.gear && !dragging && !clutchDown) {
+    // the model in use changed: the lever goes to its gear, unless a hand is on it
+    const home = gbPositions.find(p => p.gear === gbState.gear)
+    if (home) { placeLever(home.x, home.y); lever.lane = gbSlots.indexOf(home.x) }
+  }
   paintMake()
   markEngaged()
 }
@@ -2388,6 +2838,7 @@ const setNodes = {
   switch: el('set-switch'),
   openAccount: el('set-open-account'),
   theme: el('set-theme'),
+  face: el('set-face'),
   opacity: el('set-opacity'),
   opacityVal: el('set-opacity-val'),
   sessions: el('set-sessions'),
@@ -2437,6 +2888,8 @@ function renderSettings (data) {
   for (const btn of setNodes.theme.children) {
     btn.classList.toggle('on', btn.dataset.theme === s.theme)
   }
+
+  if (!holdsFocus(setNodes.face)) setNodes.face.value = FACES[s.face] ? s.face : 'classic'
 
   if (!holdsFocus(setNodes.opacity)) setNodes.opacity.value = Math.round(s.opacity * 100)
   setNodes.opacityVal.textContent = Math.round(s.opacity * 100) + '%'
@@ -2533,6 +2986,9 @@ setNodes.theme.addEventListener('click', e => {
   const btn = e.target.closest('.seg-btn')
   if (btn) saveSetting('theme', btn.dataset.theme)
 })
+
+for (const id in FACES) setNodes.face.appendChild(new Option(FACES[id].name, id))
+setNodes.face.addEventListener('change', e => saveSetting('face', e.target.value))
 
 // `input` rather than `change`, so the window fades as the slider moves
 setNodes.opacity.addEventListener('input', e => {
@@ -2656,7 +3112,7 @@ const IGNITION_HOLD_MS = 1250
 function runIgnitionSweep () {
   for (const key of DIAL_KEYS) {
     setNeedle(key, DIALS[key].max)
-    if (DIALS[key].kind === 'ring') paintRing(key, DIALS[key].max)
+    paintLevel(key, DIALS[key].max)
   }
   setTimeout(() => {
     // settle straight onto the live values; the spring damps the overshoot

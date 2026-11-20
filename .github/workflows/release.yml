@@ -1,16 +1,15 @@
 name: Release
 
-# A version tag (v0.4.0) becomes a draft release carrying the installers and
-# the latest*.yml files the installed app updates from (src/updater.js). It
-# goes public when the maintainer publishes the draft, so nothing half-uploaded
-# is ever offered to an installed copy, and no push to main releases anything.
-# Only the owner can push tags, so nothing from a fork reaches this workflow:
-# there is deliberately no pull_request trigger here, and never a
-# pull_request_target one.
+# A version tag (v0.5.0) becomes a draft release carrying the installers,
+# their update signatures and latest.json, which the installed app updates
+# from (src-tauri/src/updater.rs). It goes public when the maintainer
+# publishes the draft, so nothing half-uploaded is ever offered to an
+# installed copy, and no push to main releases anything. Only the owner can
+# push tags, so nothing from a fork reaches this workflow: there is
+# deliberately no pull_request trigger here, and never a pull_request_target.
 on:
   push:
     tags: ['v*']
-  workflow_dispatch:
 
 concurrency:
   group: release-${{ github.ref }}
@@ -25,20 +24,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
-            script: dist
           - os: macos-latest
-            script: dist:mac
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     permissions:
-      contents: write # open the draft release and upload the installers to it
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      contents: write # open the draft release and upload the bundles to it
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # the release notes are every commit since the previous release tag
-          fetch-depth: 0
           persist-credentials: false
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -53,50 +50,38 @@ jobs:
         run: |
           npm ci
           npm ci --prefix streamdeck
+          rustup target add ${{ matrix.target }}
 
-      # The tag is the version. One that does not match package.json stops here
-      # rather than shipping an installer that calls itself something else.
-      - name: Check the tag against package.json
+      # The tag is the version. One that does not match the app stops here
+      # rather than shipping a bundle that calls itself something else.
+      - name: Check the tag against tauri.conf.json
         shell: bash
         run: |
-          version=$(node -p "require('./package.json').version")
-          echo "VERSION=$version" >> "$GITHUB_ENV"
-          if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
-            echo "tag $GITHUB_REF_NAME, but package.json says $version" >&2
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "tag $GITHUB_REF_NAME, but tauri.conf.json says $version" >&2
             exit 1
           fi
 
       - name: Test
-        run: npm test
+        run: cargo test --manifest-path src-tauri/Cargo.toml
 
-      # electron-builder copies build/release-notes.md into latest.yml, which is
-      # where the app's "what changed" text comes from.
-      - name: Write release notes
-        shell: bash
-        run: |
-          prev=$(git describe --tags --abbrev=0 --match 'v*' --exclude "v$VERSION" 2>/dev/null || true)
-          if [ -n "$prev" ]; then
-            git log "$prev..HEAD" --no-merges --format='- %s' > build/release-notes.md
-          else
-            git log -n 20 --no-merges --format='- %s' > build/release-notes.md
-          fi
-          cat build/release-notes.md
+      # the packed Stream Deck plugin ships inside the app as a resource
+      - name: Pack the Stream Deck plugin
+        run: npm run streamdeck:pack
 
-      # `--publish never`: the upload below is the one that happens, to a draft.
-      - name: Build
-        run: npm run ${{ matrix.script }} -- --publish never
-
-      # A draft, so the app never sees a release whose latest.yml is not there
-      # yet. Whichever job gets here first opens it; the other finds it. A draft
-      # the maintainer opened by hand ahead of the tag is found the same way.
-      - name: Upload to the draft release
-        shell: bash
-        run: |
-          gh release view "v$VERSION" > /dev/null 2>&1 ||
-            gh release create "v$VERSION" --draft --target "$GITHUB_SHA" \
-              --title "LLM Speedometer $VERSION" --notes-file build/release-notes.md ||
-            true
-          shopt -s nullglob
-          files=(dist/*.exe dist/*.dmg dist/latest*.yml dist/*.blockmap build/*.streamDeckPlugin)
-          printf '%s\n' "${files[@]}"
-          gh release upload "v$VERSION" --clobber "${files[@]}"
+      # Builds, signs each bundle with the updater key, uploads to a draft
+      # release under the tag (opening it if this job is first), and merges
+      # this platform's entry into the release's latest.json.
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'LLM Speedometer __VERSION__'
+          releaseBody: 'See the notes above the assets.'
+          releaseDraft: true
+          prerelease: false
+          args: --target ${{ matrix.target }}

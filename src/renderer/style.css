@@ -76,6 +76,10 @@
 html, body {
   background: transparent;
   overflow: hidden;
+  /* WebKit, which the Tauri build runs in, only knows the prefixed form:
+     without it a drag selects the text and paints it in the system
+     highlight colour. */
+  -webkit-user-select: none;
   user-select: none;
   cursor: default;
   font-family: var(--font);
@@ -991,6 +995,16 @@ body.mini .gearbox { display: none; }
 .seg-btn:hover { color: var(--ink); }
 .seg-btn.on { background: var(--bg); color: var(--ink); box-shadow: 0 1px 2px var(--shadow); }
 
+.set-select {
+  font-family: var(--font);
+  font-size: var(--fs-xs);
+  color: var(--ink);
+  background: var(--edge);
+  border: none; border-radius: 6px;
+  padding: 3px 6px;
+  cursor: pointer;
+}
+
 /* switch */
 .toggle {
   flex: none;
@@ -1090,6 +1104,74 @@ body.mini .gearbox { display: none; }
 }
 /* the flanking gauges are smaller, so their numerals scale down with them */
 .dial-num.sm { font-size: var(--fs-micro); fill: var(--mark); }
+
+/* ---------- faces: the cluster's other layouts ---------- */
+
+/* A dial drawn on a plate of its own, with or without a bezel. The palette
+   comes from the dial's skin below; with none, nothing is drawn. */
+.dial-plate { fill: var(--plate, none); stroke: var(--bezel, none); stroke-width: var(--bezel-w, 0); }
+.dial-band  { fill: none; }
+.dial-read.read-md { font-size: var(--fs-md); }
+/* a readout with no disc under it sits on the card and takes the card's ink */
+.dial-read.on-card { fill: var(--ink); }
+.dial-unit.on-card { fill: var(--faint); }
+
+.bar-track { stroke: var(--dim); }
+.bar-fill  { transition: stroke 300ms; }
+.bar-cap   { text-anchor: start; }
+.bar-read  {
+  fill: var(--ink);
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-bold);
+  text-anchor: end;
+}
+.bar-read.mid   { text-anchor: middle; }
+.bar-read.muted { fill: var(--faint); }
+/* bars set into a dark screen read in the instrument inks, in both themes */
+.bar.on-face .bar-cap  { fill: var(--tick); }
+.bar.on-face .bar-read { fill: var(--dial-ink); }
+.bar.on-face .bar-read.muted { fill: var(--tick); }
+
+.face-panel { fill: var(--face); stroke: var(--face-edge); stroke-width: 1; }
+.face-screw { fill: var(--mark); }
+.hand-read  { fill: var(--hand); }
+
+.cluster { --hand: #C8201A; }
+
+/* Skins recolour one dial; the properties cascade through its group. */
+.cluster [data-skin="yellow"] {
+  --plate: #F2C230;
+  --mark: rgba(20, 20, 19, 0.55);
+  --mark-lit: #141413;
+}
+.cluster [data-skin="aero"] {
+  --plate: #0D0E10;
+  --bezel: #5A5E66;
+  --bezel-w: 2;
+}
+.cluster [data-skin="brass"] {
+  --plate: #EFE6CC;
+  --bezel: #B8904A;
+  --bezel-w: 3;
+  --mark: rgba(58, 46, 30, 0.6);
+  --mark-lit: #3A2E1E;
+  --needle: #1E1A14;
+  --dim: #CDBF9C;
+}
+
+/* Whole-face palettes, scoped to the cluster so the card keeps its theme. */
+.cluster[data-face="supercar"] { --needle: #C8201A; }
+.cluster[data-face="flight"] {
+  --face: #1B1D20;
+  --face-edge: #34373C;
+  --mark: #7C8088;
+  --mark-lit: #E9EAE6;
+  --needle: #F4F4F0;
+  --faint: #9EA2A8;
+  --ink: #F1F1EC;
+  --dim: #3A3D42;
+}
+.cluster[data-face="flight"] .dial-disc { fill: #0D0E10; stroke: #34373C; }
 
 /* The needle is driven by a spring simulation in app.js, one frame at a time,
    so it must NOT carry a CSS transition — that would lag and fight the physics. */

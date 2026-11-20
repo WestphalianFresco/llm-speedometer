@@ -5,9 +5,10 @@ what those tools already write to disk and renders it as a car dashboard:
 a tachometer for live output rate, two fuel gauges for remaining quota, and a
 mechanical odometer for lifetime and per-session token throughput.
 
-Built with Electron. No telemetry. The only network calls are one optional
-Anthropic usage lookup described below and the installed app checking this
-repo's GitHub Releases for updates.
+Built with [Tauri](https://tauri.app): a Rust backend under a page drawn by
+the system webview, so the whole app is a few megabytes. No telemetry. The
+only network calls are one optional Anthropic usage lookup described below and
+the installed app checking this repo's GitHub Releases for updates.
 
 ```
 LLM Speedometer v0.4.0                          🔒  ─  ✕
@@ -32,39 +33,52 @@ C:\Users\you\project
 ### Install it
 
 1. Open the [latest release](https://github.com/WestphalianFresco/llm-speedometer/releases/latest).
-2. Download `LLM-Speedometer-<version>-Setup.exe` (Windows) or
-   `LLM-Speedometer-<version>.dmg` (macOS) and run it. The builds are unsigned:
-   Windows SmartScreen warns the first time, and macOS wants a right-click →
-   Open the first time.
+2. Download `LLM Speedometer_<version>_x64-setup.exe` (Windows) or
+   `LLM Speedometer_<version>_aarch64.dmg` / `_x64.dmg` (macOS) and run it. The
+   builds carry no Apple or Microsoft signature: Windows SmartScreen warns the
+   first time, and macOS wants a right-click → Open the first time.
 3. Sign in to Claude Code (`claude`) or Codex (`codex`) on the same machine if
    you have not already; the app reads what they write to disk.
 
-After that it keeps itself up to date. It checks for a new version when it
-starts and every four hours, downloads it in the background, and asks before
-restarting into it. Choose **Later** and it installs the next time you quit.
-To check by hand, right-click the tray icon → **Check for updates**.
+After that it keeps itself up to date. It checks this repo's releases when it
+starts and every four hours, downloads a newer build in the background, and
+then offers **Restart to update** in the tray menu; nothing installs until
+that is clicked. Updates are verified against the key the release was signed
+with, so an unsigned macOS app updates as well as the Windows one.
 
 ### Run it from source
 
-You need [Node.js](https://nodejs.org) 22 or newer and git.
+You need [Rust](https://rustup.rs) (stable), [Node.js](https://nodejs.org) 22
+or newer and git. On Windows, the WebView2 runtime that ships with Windows 10
+and 11; on Linux, `webkit2gtk`.
 
 ```bash
 git clone https://github.com/WestphalianFresco/llm-speedometer.git
 cd llm-speedometer
 npm install
-npm start
+npm run dev
 ```
+
+`npm test` runs the Rust unit tests and the Stream Deck plugin's.
 
 ### Build an installer
 
 ```bash
-npm run dist        # Windows installer and portable .exe, in dist/
-npm run dist:mac    # macOS .dmg
-npm run dist:linux  # Linux AppImage
+npm run build       # dmg + .app on macOS, NSIS + MSI on Windows, AppImage + deb on Linux
 ```
 
-Only the Windows installer updates itself. The portable exe, and the macOS and
-Linux builds, have to be replaced by hand.
+Bundles land in `src-tauri/target/release/bundle/`. A release is cut by
+pushing a version tag (see Contributing); the workflow signs each bundle for
+the updater with the maintainer's key.
+
+### Layout
+
+- `src/renderer/` — the dashboard page: gauges, odometer, gearbox, settings.
+- `src/renderer/tauri-shim.js` — the page's `window.meter` surface, over
+  Tauri's invoke/listen.
+- `src-tauri/` — the Rust backend: transcripts, the usage endpoint, quota
+  calibration, pricing, sessions, the tray, the loopback bridge, the updater.
+- `plugin/` — the Claude Code plugin. `streamdeck/` — the Stream Deck plugin.
 
 ## Contributing
 
@@ -72,7 +86,7 @@ Open to pull requests — bug fixes especially. Fork the repo, make your change
 on a branch, and open a PR against `main` saying what it fixes and how you
 checked it. Small, focused PRs are the easiest to review.
 
-A release is cut by pushing a version tag (`v0.4.0`, matching `package.json`):
+A release is cut by pushing a version tag (`v0.5.0`, matching `src-tauri/tauri.conf.json`):
 `.github/workflows/release.yml` builds the installers and puts them on a draft
 release, and every installed copy picks it up once the maintainer publishes
 the draft. Changes to `.github/workflows/` get the closest look.
@@ -186,7 +200,7 @@ installer. The plugin's source is in `streamdeck/`: three keys — weekly tank,
 npm run streamdeck:pack   # builds build/com.williamfan.llmmeter.streamDeckPlugin
 ```
 
-`npm run dist` runs this first and ships the packed plugin inside the app.
+`npm run build` runs this first and ships the packed plugin inside the app.
 
 ## Paths
 
