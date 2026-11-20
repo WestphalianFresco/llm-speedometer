@@ -1,13 +1,13 @@
 # LLM Speedometer
 
 A frameless, always-on-top desktop gauge cluster for LLM coding CLIs. It reads
-what those tools already write to disk and renders it as a car dashboard:
-a tachometer for live output rate, two fuel gauges for remaining quota, and a
-mechanical odometer for lifetime and per-session token throughput.
+what Claude Code and Codex already write to disk and draws it as a car
+dashboard: a tachometer for live output rate, two fuel gauges for remaining
+quota, and an odometer for lifetime and per-session tokens.
 
 Built with Electron. No telemetry. The only network calls are one optional
-Anthropic usage lookup described below and the installed app checking this
-repo's GitHub Releases for updates.
+Anthropic usage lookup and the installed app checking this repo's GitHub
+Releases for updates.
 
 ```
 LLM Speedometer v0.4.0                          🔒  ─  ✕
@@ -27,55 +27,56 @@ C:\Users\you\project
    ⟳ 5H 1h 41m 21s    Week 2d 12h 04m
 ```
 
-## Getting started
-
-### Install it
+## Install
 
 1. Open the [latest release](https://github.com/WestphalianFresco/llm-speedometer/releases/latest).
 2. Download `LLM-Speedometer-<version>-Setup.exe` (Windows) or
    `LLM-Speedometer-<version>.dmg` (macOS) and run it. The builds are unsigned:
    Windows SmartScreen warns the first time, and macOS wants a right-click →
    Open the first time.
-3. Sign in to Claude Code (`claude`) or Codex (`codex`) on the same machine if
-   you have not already; the app reads what they write to disk.
+3. Sign in to Claude Code (`claude`) or Codex (`codex`) on the same machine;
+   the app reads what they write to disk.
 
-After that it keeps itself up to date. It checks for a new version when it
-starts and every four hours, downloads it in the background, and asks before
-restarting into it. Choose **Later** and it installs the next time you quit.
-To check by hand, right-click the tray icon → **Check for updates**.
+The Windows installer keeps itself up to date and asks before restarting. The
+portable exe and the macOS and Linux builds are replaced by hand.
 
-### Run it from source
+### From source
 
-You need [Node.js](https://nodejs.org) 22 or newer and git.
+Needs [Node.js](https://nodejs.org) 22 or newer and git.
 
 ```bash
 git clone https://github.com/WestphalianFresco/llm-speedometer.git
 cd llm-speedometer
 npm install
-npm start
-```
-
-### Build an installer
-
-```bash
+npm start           # run it
 npm run dist        # Windows installer and portable .exe, in dist/
 npm run dist:mac    # macOS .dmg
 npm run dist:linux  # Linux AppImage
 ```
 
-Only the Windows installer updates itself. The portable exe, and the macOS and
-Linux builds, have to be replaced by hand.
+## What the numbers mean
 
-## Contributing
+- **OUTPUT RATE**: output tokens per minute over a trailing 10 minutes. Cache
+  traffic is excluded.
+- **TANK**: quota *remaining*, not used, for the 5-hour and weekly windows.
+- **ODO / TRIP**: lifetime and current-session tokens, counting
+  input + cache writes + output.
+- **WEEK**: tokens used in the current weekly window, counted from this
+  machine's transcripts, next to an estimate of what is left. The estimate is
+  withheld until the window is at least 8% burned and local history covers all
+  of it.
+- **COST**: what the week's tokens would cost at list price, and what was
+  actually charged when the account has burned past its plan into usage
+  credits. On a subscription only the second figure is a bill.
 
-Open to pull requests — bug fixes especially. Fork the repo, make your change
-on a branch, and open a PR against `main` saying what it fixes and how you
-checked it. Small, focused PRs are the easiest to review.
+Prices live in `src/providers/pricing.js`. Any of them can be corrected without
+a release by writing `~/.llm-speedometer/pricing.json`:
 
-A release is cut by pushing a version tag (`v0.4.0`, matching `package.json`):
-`.github/workflows/release.yml` builds the installers and puts them on a draft
-release, and every installed copy picks it up once the maintainer publishes
-the draft. Changes to `.github/workflows/` get the closest look.
+```json
+{ "anthropic": { "^claude-sonnet-5": { "input": 2, "output": 10 } } }
+```
+
+Needle wander is cosmetic. The digital readouts are exact.
 
 ## Providers
 
@@ -88,64 +89,51 @@ the draft. Changes to `.github/workflows/` get the closest look.
 | 5-hour tank | yes | **N/A** — ChatGPT plans report one weekly window |
 | model switch | writes `settings.json` | read-only (model lives in `config.toml`) |
 
-Each provider mounts its own store behind one interface, so ODO and TRIP are
-independent per LLM — nothing is shared or summed across them.
+ODO and TRIP are independent per provider; nothing is summed across them.
 
-### How quota is obtained
+Where the quota comes from:
 
-The two providers differ in a way worth knowing:
-
-- **Codex writes its own rate limits into the transcript.** No polling, no
-  network access, no rate-limit problems.
-- **Anthropic's lives behind `api.anthropic.com/api/oauth/usage`**, which
+- **Codex** writes its own rate limits into the transcript. No network access.
+- **Anthropic's** lives behind `api.anthropic.com/api/oauth/usage`, which
   throttles aggressively ([#31021][1], [#31637][2]). It is polled at most every
-  15 minutes with an exponential backoff ladder, and between polls the reading
-  is projected forward from the last official anchor using a self-calibrating
-  dollars-to-percent rate. The badge and tooltip say which mode is live.
-- **While a Claude Code session runs the [plugin](plugin/README.md)**, the app
-  takes the week from `~/.llm-speedometer/reading.json` instead: the same
-  percentages, read by the engine from the rate-limit headers of every reply,
-  so the anchor moves with each reply and the endpoint is never needed for it.
-  A file older than 15 minutes is ignored, and the poll above still covers
-  whatever the file does not carry.
+  15 minutes with exponential backoff, and between polls the reading is
+  projected forward from the last official figure. The badge and tooltip say
+  which mode is live.
+- While a Claude Code session runs the [plugin](plugin/README.md), the app
+  takes the week from `~/.llm-speedometer/reading.json` instead, so the
+  endpoint is not needed for it.
 
 [1]: https://github.com/anthropics/claude-code/issues/31021
 [2]: https://github.com/anthropics/claude-code/issues/31637
 
-## Resizing
+### Sign-in and paths
 
-Drag any edge of the expanded window and the whole dashboard scales with it:
-the aspect ratio is locked and the page is zoomed to the new width, so the
-gauges are drawn larger rather than rearranged. It goes from about 0.6× to
-2.5× of its 470×432 default, and the chosen size is remembered. The collapsed
-pill stays fixed — it is one line of text, and there is nothing in it to grow.
+There is no authentication in this app and no credential entry anywhere in it.
+It detects which provider CLIs are already signed in locally and reads theirs.
+Codex has to be run once on the machine before its figures appear.
 
-## Minimising
+On macOS, Claude Code keeps its token in the login Keychain, so the first
+lookup raises a one-time permission prompt. If that is declined, the app falls
+back to local estimation.
 
-Minimising puts the app in the notification area rather than the taskbar. On
-Windows a tray icon new to the system starts in the overflow flyout — behind
-the chevron, with the "hidden icons" — until it is dragged onto the bar itself.
-Hovering it reports the week's remaining quota, remaining tokens and the live
-rate, so the usual glance needs no window at all; left click brings the window
-back, right click gives Show / Collapse / Refresh / Quit.
+No path is hardcoded: `CLAUDE_CONFIG_DIR` / `CODEX_HOME` / `GEMINI_CONFIG_DIR`
+win when set, then the conventional dot-directory, then
+`$XDG_CONFIG_HOME/<tool>`.
 
-The window's own close button does the same thing while the tray icon exists,
-because with somewhere to put it away, closing the window is putting it away
-and not quitting. Quit lives on the tray menu and on the ✕ in the collapsed
-pill. Turning **Minimise to tray** off in settings restores the ordinary
-behaviour — minimise to taskbar, close to exit — and it falls back to that on
-its own where no notification area exists.
+## Window
 
-Collapsing to the pill is unchanged and is a different gesture: the window
-stays on screen, just small.
+- **Resize**: drag any edge and the whole dashboard scales, from about 0.6× to
+  2.5×. The size is remembered.
+- **Minimise or close**: both put the app in the tray. Hovering the icon shows
+  the week's remaining quota and the live rate; right click gives Show /
+  Collapse / Refresh / Quit. **Minimise to tray** in settings turns this off.
+- **Collapse**: shrinks the window to a one-line pill that stays on screen.
 
 ## Claude Code plugin
 
-The same readings without a window: `plugin/` is a Claude Code plugin that
-puts quota left, the reset countdown and the output rate on the prompt's hint
-line, and `/speedometer` opens a pane with the bars and this session's TRIP.
-Its figures come from the rate-limit windows Claude Code receives with every
-reply, so it needs no Keychain access and never calls the usage endpoint.
+`plugin/` puts quota left, the reset countdown and the output rate on the
+prompt's hint line, and `/speedometer` opens a pane with the bars and this
+session's TRIP. It needs no Keychain access and never calls the usage endpoint.
 
 ```
 /plugin install llm-speedometer --marketplace WestphalianFresco/llm-speedometer
@@ -156,9 +144,9 @@ See [plugin/README.md](plugin/README.md).
 ## Stream Deck and other local readers
 
 The running app serves its reading on a loopback-only port, so other tools on
-the same machine can show the gauges without polling Anthropic a second time.
-On launch it writes `~/.llm-speedometer/bridge.json` with the port and a fresh
-random token; each request must send it as `X-Bridge-Token`.
+the same machine can show the gauges without polling Anthropic again. On launch
+it writes `~/.llm-speedometer/bridge.json` with the port and a fresh random
+token; each request must send it as `X-Bridge-Token`.
 
 | route | does |
 |---|---|
@@ -166,119 +154,19 @@ random token; each request must send it as `X-Bridge-Token`.
 | `POST /v1/refresh` | the tray's Refresh now |
 | `POST /v1/show` | the tray's Show dashboard |
 
-On quit the token is cleared but the launch command is kept, so a Stream Deck
-key pressed while the app is closed can start it.
+While the app is closed, the Stream Deck keys read the plugin's `reading.json`
+instead. **Settings → Stream Deck** turns the bridge on or off, says where the
+chain is broken, and installs the packed plugin. Its source is in
+`streamdeck/`; `npm run streamdeck:pack` builds it.
 
-While the app is closed, the keys read `~/.llm-speedometer/reading.json`
-instead — the file the [Claude Code plugin](plugin/README.md) rewrites with
-every reply — so a Claude Code session alone keeps the deck live, with no
-window anywhere. A reading older than 90 s shows its rate as 0; a window whose
-reset has passed shows as no reading. Pressing a key drawn from that file
-starts the app, as pressing an OFF key does.
+## Contributing
 
-**Settings → Stream Deck** turns the bridge on or off, says where the chain is
-broken (off / Stream Deck not found / plugin not installed / no keys / connected
-· N keys), and **Install plugin…** hands the packed plugin to Stream Deck's own
-installer. The plugin's source is in `streamdeck/`: three keys — weekly tank,
-5-hour tank, output rate — drawn as ring gauges.
+Open to pull requests, bug fixes especially. Make your change on a branch and
+open a PR against `main` saying what it fixes and how you checked it.
 
-```bash
-npm run streamdeck:pack   # builds build/com.williamfan.llmmeter.streamDeckPlugin
-```
-
-`npm run dist` runs this first and ships the packed plugin inside the app.
-
-## Paths
-
-No path is hardcoded. Each root resolves per call, in order:
-
-1. `CLAUDE_CONFIG_DIR` / `CODEX_HOME` / `GEMINI_CONFIG_DIR` — **authoritative**
-   when set, existing or not
-2. the conventional dot-directory under `os.homedir()` (Windows, macOS, Linux)
-3. `$XDG_CONFIG_HOME/<tool>`
-
-Because resolution happens per call rather than at startup, a CLI you sign into
-later is picked up without restarting the app.
-
-On macOS, Claude Code keeps its OAuth token in the login Keychain rather than in
-`.credentials.json`; the credential reader falls back to
-`security find-generic-password`, which raises a one-time permission prompt. If
-that is declined, the app degrades to local estimation rather than failing.
-
-## What the numbers mean
-
-- **OUTPUT RATE** — output tokens per minute over a trailing 10-minute window.
-  Cache reads and cache writes are excluded: on a busy session cache traffic
-  runs orders of magnitude above everything else and would swamp the reading.
-- **TANK** — quota *remaining*, not used. A gauge that empties as you work is
-  the only version of the metaphor that reads correctly.
-- **ODO / TRIP** — lifetime and current-session tokens, counting
-  input + cache writes + output.
-- **WEEK** — the same count restricted to the current weekly window, next to an
-  estimate of what is left of it. See below: the two halves are not the same
-  kind of number.
-- **COST** — what the week's tokens would cost at list price, and — when the
-  account has burned past its plan into usage credits — what was actually
-  charged. On a subscription only the second figure is a bill.
-
-### Why "used" is counted and "left" is estimated
-
-The usage endpoint reports percentages and nothing else. Every `*_dollars`
-field on a quota window comes back `null` on a subscription, and there is no
-token count anywhere in the payload — `/usage` shows percentages for the same
-reason. So the two halves of the WEEK line are obtained differently:
-
-- **used** is counted from the transcripts on this machine. Exact, for this
-  machine.
-- **left** is the endpoint's percentage against a window size *learned* from
-  how many tokens it took to move that percentage. It is marked as an estimate
-  and it is withheld entirely until the window is at least 8% burned and local
-  history covers the whole window — below that, whole-number percentages make
-  the division swing by more than the answer is worth.
-
-They are deliberately not two halves of one subtraction. `left` leans on the
-official percentage, which accounts for work done on other machines; `used` only
-ever reports what these transcripts prove. When they disagree, the gap is real.
-
-Windows are aligned to the reset the endpoint reports (`resets_at - 7d`), not
-to a trailing seven days from now. Those are the same thing only at the instant
-a window resets; the rest of the time a trailing count sweeps in work from the
-*previous* window. On the machine this was developed against, the trailing
-version read 7.17M tokens for a week that had actually used 4.80M.
-
-### Cost tracking without a subscription
-
-A plan has a quota to gauge; an API key has a bill. On a subscription the
-dashboard shows no per-token dollars at all — a monthly fee is not charged per
-token — and the COST line only appears as EXTRA when the account reports usage
-credits charged past the plan with extra usage switched on. Prices live in one table
-(`src/providers/pricing.js`) covering every vendor, so the same tokens are
-costed the same way wherever they came from, and the figure is shown directly
-rather than only used internally as a weighting unit. Rates carry the date they
-were last checked, and anything the table gets wrong can be corrected without a
-release by writing `~/.llm-speedometer/pricing.json`:
-
-```json
-{ "anthropic": { "^claude-sonnet-5": { "input": 2, "output": 10 } } }
-```
-
-An optional `"cacheRead"` sets that model's cache-hit price as a fraction of
-its input rate (default `0.1`; Opus 5.5 is `0.05`, Fable 5.1 `0.025`).
-
-- **Needle wander** is cosmetic: a spring simulation with layered noise, so the
-  needle breathes like a real gauge. The digital readouts are exact.
-
-## Sign-in
-
-There is no authentication in this app and no credential entry anywhere in it.
-The unlock screen detects which provider CLIs are already signed in locally and
-mounts that provider's reader. For a provider that is not signed in, the only
-action offered is opening that vendor's real site in your browser.
-
-A browser session alone is not enough for OpenAI: the quota figures come from
-OpenAI's servers inside Codex's own authenticated API responses. There is no
-public usage endpoint for ChatGPT consumer plans, so a fresh device needs
-`codex` run once locally before anything appears.
+A release is cut by pushing a version tag that matches `package.json`:
+`.github/workflows/release.yml` builds the installers onto a draft release, and
+installed copies pick it up once the draft is published.
 
 ## Licence
 
